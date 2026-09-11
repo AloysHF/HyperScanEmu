@@ -1,10 +1,17 @@
-use crate::{card::CardDevice, CardImage, EmulatorError, InputState};
+use crate::{
+    card::CardDevice,
+    cdrom::{CdDmaRequest, CdServo},
+    CardImage, EmulatorError, InputState,
+};
 
 pub const CPU_CLOCK_HZ: u64 = 108_000_000;
 pub const PERIPHERAL_CLOCK_HZ: u64 = 27_000_000;
 pub const TIMER_INTERRUPT_SOURCE: u8 = 56;
 pub const I2C_INTERRUPT_SOURCE: u8 = 39;
+pub const CD_INTERRUPT_SOURCE: u8 = 60;
 
+const CD_BASE: u32 = 0x0806_0000;
+const CD_END: u32 = 0x0806_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
 const TIMER_BASE: u32 = 0x0816_0000;
@@ -17,6 +24,7 @@ const GPIO_INPUT: u32 = 0x0820_0068;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
+    cd: CdServo,
     i2c: I2cController,
     card: CardDevice,
     gpio_output: u32,
@@ -34,6 +42,7 @@ impl Default for Spg290Devices {
 impl Spg290Devices {
     pub fn new() -> Self {
         Self {
+            cd: CdServo::default(),
             i2c: I2cController::default(),
             card: CardDevice::default(),
             gpio_output: 0,
@@ -45,13 +54,21 @@ impl Spg290Devices {
 
     pub fn reset(&mut self) {
         let card = self.card.eject();
+        let disc_sectors = self.cd_disc_sectors();
         *self = Self::new();
+        self.cd.set_disc(disc_sectors);
         if let Some(card) = card {
             self.card.insert(card);
         }
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
+        if (CD_BASE..=CD_END).contains(&address) {
+            return self
+                .cd
+                .read(address - CD_BASE)
+                .ok_or(unknown_mmio("read", address));
+        }
         if (I2C_BASE..=I2C_END).contains(&address) {
             return self.i2c.read(address - I2C_BASE);
         }
@@ -73,6 +90,15 @@ impl Spg290Devices {
     }
 
     pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
+        if (CD_BASE..=CD_END).contains(&address) {
+            self.cd
+                .write(address - CD_BASE, value)
+                .ok_or(unknown_mmio("write", address))?;
+            if !self.cd.frame_found() {
+                self.pending_interrupts &= !(1_u64 << CD_INTERRUPT_SOURCE);
+            }
+            return Ok(());
+        }
         if (I2C_BASE..=I2C_END).contains(&address) {
             self.i2c.write(address - I2C_BASE, value)?;
             if !self.i2c.interrupt_pending() {
@@ -108,6 +134,7 @@ impl Spg290Devices {
 
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
         self.card.tick(cpu_cycles);
+        self.cd.tick(cpu_cycles)?;
         if self.i2c.tick(cpu_cycles) {
             self.pending_interrupts |= 1_u64 << I2C_INTERRUPT_SOURCE;
         }
@@ -133,6 +160,23 @@ impl Spg290Devices {
 
     pub fn eject_card(&mut self) -> Option<CardImage> {
         self.card.eject()
+    }
+
+    pub fn set_disc(&mut self, sector_count: Option<u32>) {
+        self.cd.set_disc(sector_count);
+    }
+
+    pub(crate) fn take_cd_dma_request(&mut self) -> Option<CdDmaRequest> {
+        self.cd.take_dma_request()
+    }
+
+    pub(crate) fn complete_cd_dma(&mut self, next_pointer: u32) {
+        self.cd.complete_dma(next_pointer);
+        self.pending_interrupts |= 1_u64 << CD_INTERRUPT_SOURCE;
+    }
+
+    fn cd_disc_sectors(&self) -> Option<u32> {
+        self.cd.disc_sector_count()
     }
 
     fn update_timer_clocks(&mut self) {

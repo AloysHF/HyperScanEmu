@@ -42,6 +42,7 @@ impl Emulator {
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.bus.reset();
+        self.bus.set_disc(self.disc.as_ref());
         self.framebuffer.fill(0);
         self.audio_samples.clear();
         self.input = InputState::default();
@@ -55,10 +56,13 @@ impl Emulator {
 
     pub fn attach_disc(&mut self, disc: DiscImage) {
         self.disc = Some(disc);
+        self.bus.set_disc(self.disc.as_ref());
     }
 
     pub fn eject_disc(&mut self) -> Option<DiscImage> {
-        self.disc.take()
+        let disc = self.disc.take();
+        self.bus.set_disc(None);
+        disc
     }
 
     pub fn insert_card(&mut self, card: CardImage) -> Option<CardImage> {
@@ -85,6 +89,9 @@ impl Emulator {
         let outcome = self.cpu.step(&mut self.bus)?;
         if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
             self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+        }
+        if let Some(disc) = &self.disc {
+            self.bus.service_cd(disc)?;
         }
         let pending = self.bus.take_pending_interrupts();
         for source in 1..64 {

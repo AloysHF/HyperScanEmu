@@ -1,4 +1,4 @@
-use crate::{CardImage, EmulatorError, Firmware, InputState, Spg290Devices};
+use crate::{CardImage, DiscImage, EmulatorError, Firmware, InputState, Spg290Devices};
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
 pub const DRAM_SIZE: usize = 0x0100_0000;
@@ -150,6 +150,26 @@ impl Bus {
         self.devices.eject_card()
     }
 
+    pub fn set_disc(&mut self, disc: Option<&DiscImage>) {
+        self.devices.set_disc(disc.map(DiscImage::sector_count));
+    }
+
+    pub fn service_cd(&mut self, disc: &DiscImage) -> Result<(), EmulatorError> {
+        while let Some(request) = self.devices.take_cd_dma_request() {
+            let sector = disc.read_raw_sector(request.lba)?;
+            let mut pointer = request.buffer_pointer;
+            for byte in &sector[..request.sector_size] {
+                self.write_u8(pointer, *byte)?;
+                pointer = pointer.wrapping_add(1);
+                if pointer > request.buffer_end {
+                    pointer = request.buffer_start;
+                }
+            }
+            self.devices.complete_cd_dma(pointer);
+        }
+        Ok(())
+    }
+
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
         if self.boot_source == BootSource::InternalRom && address >= BOOT_WINDOW_START {
             let offset = (address - BOOT_WINDOW_START) as usize;
@@ -179,7 +199,9 @@ fn memory_fault(access: &'static str, address: u32, width: u8) -> EmulatorError 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BIOS_ROM_SIZE, INTERNAL_ROM_SIZE};
+    use crate::{
+        BIOS_ROM_SIZE, CD_INTERRUPT_SOURCE, CPU_CLOCK_HZ, INTERNAL_ROM_SIZE, RAW_SECTOR_SIZE,
+    };
 
     fn test_bus() -> Bus {
         let mut internal = vec![0; INTERNAL_ROM_SIZE];
@@ -187,6 +209,36 @@ mod tests {
         internal[0..4].copy_from_slice(&0x1122_3344_u32.to_le_bytes());
         bios[0..4].copy_from_slice(&0xaabb_ccdd_u32.to_le_bytes());
         Bus::new(Firmware::from_parts(&internal, &bios).unwrap())
+    }
+
+    fn test_disc() -> DiscImage {
+        let mut image = vec![0; 22 * RAW_SECTOR_SIZE];
+        for (lba, sector) in image
+            .as_chunks_mut::<RAW_SECTOR_SIZE>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            sector[..12].copy_from_slice(&[
+                0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0,
+            ]);
+            let frame = lba as u32 + 150;
+            let bcd = |value: u32| (((value / 10) << 4) | (value % 10)) as u8;
+            sector[12] = bcd(frame / 4_500);
+            sector[13] = bcd((frame / 75) % 60);
+            sector[14] = bcd(frame % 75);
+            sector[15] = 1;
+        }
+        let descriptor = |image: &mut [u8], lba: usize, kind: u8, id: &[u8; 5]| {
+            let start = lba * RAW_SECTOR_SIZE + 16;
+            image[start] = kind;
+            image[start + 1..start + 6].copy_from_slice(id);
+            image[start + 6] = 1;
+        };
+        descriptor(&mut image, 16, 1, b"CD001");
+        descriptor(&mut image, 17, 0xff, b"CD001");
+        descriptor(&mut image, 18, 0, b"NSR02");
+        DiscImage::from_mode1_2352(image).unwrap()
     }
 
     #[test]
@@ -246,5 +298,28 @@ mod tests {
         assert_eq!(bus.read_u8(0x100).unwrap(), 0);
         assert_eq!(bus.read_u8(INTERNAL_SRAM_START).unwrap(), 0);
         assert_eq!(bus.boot_source(), BootSource::InternalRom);
+    }
+
+    #[test]
+    fn cd_servo_dma_copies_raw_sector_and_raises_interrupt() {
+        let disc = test_disc();
+        let mut bus = test_bus();
+        bus.set_disc(Some(&disc));
+        bus.write_u32(0x0806_0048, 0).unwrap();
+        bus.write_u32(0x0806_004c, 2).unwrap();
+        bus.write_u32(0x0806_0050, 0).unwrap();
+        bus.write_u32(0x0806_0060, 0x100).unwrap();
+        bus.write_u32(0x0806_0064, 0xa2f).unwrap();
+        bus.write_u32(0x0806_0068, 0x100).unwrap();
+        bus.write_u32(0x0806_006c, RAW_SECTOR_SIZE as u32).unwrap();
+        bus.write_u32(0x0806_0044, 0).unwrap();
+
+        bus.tick(CPU_CLOCK_HZ / 75).unwrap();
+        bus.service_cd(&disc).unwrap();
+
+        assert_eq!(bus.read_u32(0x100).unwrap(), 0xffff_ff00);
+        assert_eq!(bus.read_u32(0x10c).unwrap(), 0x0100_0200);
+        assert_eq!(bus.read_u32(0x0806_0068).unwrap(), 0x100);
+        assert_eq!(bus.take_pending_interrupts(), 1_u64 << CD_INTERRUPT_SOURCE);
     }
 }

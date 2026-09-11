@@ -13,6 +13,8 @@ The core validates every sector before exposing user data:
 - an ISO 9660 primary descriptor at LBA 16 and a descriptor terminator;
 - an `NSR02` or `NSR03` UDF volume-recognition descriptor.
 
-Successful validation exposes exactly 2048 user bytes per LBA. EDC/ECC checking
-and full CUE parsing are tracked separately; callers must not treat a renamed ISO
-or arbitrary binary file as supported media.
+Successful validation exposes both the original 2352-byte sector and exactly
+2048 user bytes per LBA. The CD servo consumes raw sectors for ring-buffer DMA,
+scheduled at the selected drive speed. EDC/ECC checking and full CUE parsing are
+tracked separately; callers must not treat a renamed ISO or arbitrary binary file
+as supported media.

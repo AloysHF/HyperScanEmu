@@ -5,6 +5,9 @@ and unsupported access widths stop execution with the access type and address.
 
 Implemented today:
 
+- CD servo registers at `0x0806_0004` through `0x0806_006c`;
+- deterministic 1×/2×/4×/8× sector scheduling, raw-sector ring-buffer DMA and IRQ source 60;
+- firmware-visible CD DSP commands, program memory, disc identification and single-track Q subchannel;
 - SPG290 I²C master registers at `0x0813_0020` through `0x0813_0038`;
 - cycle-scheduled 8-bit, 16-bit and repeating I²C transfers, acknowledge bits and IRQ source 39;
 - both HyperScan controllers, including buttons, analog axes and sampled-byte checksums;
@@ -27,3 +30,7 @@ have no external side effect because no write command has yet been identified.
 RFID pulse widths are measured in emulated CPU cycles and converted to the
 13.56 MHz carrier clock. REQA, WUPA, RID, READ, RALL, WRITE-E and WRITE-NE are
 implemented with framing, odd parity and protocol CRC responses.
+
+The CD path currently supports the validated single MODE1 data-track layout.
+CD audio requests remain an explicit error, and generated Q-subchannel CRC bytes
+are placeholders pending a subcode conformance test.

@@ -25,6 +25,11 @@ pub enum EmulatorError {
         expected: usize,
         actual: usize,
     },
+    InvalidCdSectorSize {
+        size: usize,
+        maximum: usize,
+    },
+    UnsupportedCdAudio,
     DiscSectorOutOfRange {
         lba: u32,
         sector_count: u32,
@@ -92,6 +97,13 @@ impl Display for EmulatorError {
                     "invalid card size: expected {expected} bytes, got {actual}"
                 )
             }
+            Self::InvalidCdSectorSize { size, maximum } => {
+                write!(
+                    formatter,
+                    "invalid CD sector size {size}: maximum is {maximum}"
+                )
+            }
+            Self::UnsupportedCdAudio => formatter.write_str("CD audio transfer is not implemented"),
             Self::InvalidRegister { index } => write!(formatter, "invalid CPU register r{index}"),
             Self::InvalidControlRegister { index } => {
                 write!(formatter, "invalid CPU control register cr{index}")

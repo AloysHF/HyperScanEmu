@@ -60,6 +60,11 @@ impl DiscImage {
     }
 
     pub fn read_sector(&self, lba: u32) -> Result<&[u8], EmulatorError> {
+        let raw = self.read_raw_sector(lba)?;
+        Ok(&raw[USER_DATA_OFFSET..USER_DATA_OFFSET + USER_DATA_SIZE])
+    }
+
+    pub fn read_raw_sector(&self, lba: u32) -> Result<&[u8], EmulatorError> {
         if lba >= self.sector_count {
             return Err(EmulatorError::DiscSectorOutOfRange {
                 lba,
@@ -67,8 +72,8 @@ impl DiscImage {
             });
         }
 
-        let start = lba as usize * RAW_SECTOR_SIZE + USER_DATA_OFFSET;
-        Ok(&self.raw_sectors[start..start + USER_DATA_SIZE])
+        let start = lba as usize * RAW_SECTOR_SIZE;
+        Ok(&self.raw_sectors[start..start + RAW_SECTOR_SIZE])
     }
 }
 
