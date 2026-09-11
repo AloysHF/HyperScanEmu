@@ -18,6 +18,25 @@ pub(crate) struct DirectFrameState {
     pub fade: u8,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PpuLayerState {
+    pub position_x: u32,
+    pub position_y: u32,
+    pub attribute: u32,
+    pub control: u32,
+    pub number_pointer: u32,
+    pub blend: u8,
+    pub buffer_start: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PpuRenderState {
+    pub enabled: bool,
+    pub blend_subtract: bool,
+    pub transparent_rgb: u32,
+    pub layers: [PpuLayerState; 3],
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct VideoController {
     ppu_registers: [u32; 64],
@@ -119,6 +138,28 @@ impl VideoController {
                 .copied()
                 .unwrap_or(0),
             fade: self.fade,
+        }
+    }
+
+    pub(crate) fn ppu_render_state(&self) -> PpuRenderState {
+        let layer = |index: usize| {
+            let base = [0x20, 0x3c, 0x58][index];
+            let buffer = [0xa0, 0xac, 0xb8][index];
+            PpuLayerState {
+                position_x: self.ppu_registers[base / 4],
+                position_y: self.ppu_registers[(base + 4) / 4],
+                attribute: self.ppu_registers[(base + 8) / 4],
+                control: self.ppu_registers[(base + 12) / 4],
+                number_pointer: self.ppu_registers[(base + 16) / 4],
+                blend: self.ppu_registers[(base + 24) / 4] as u8,
+                buffer_start: self.ppu_registers[buffer / 4],
+            }
+        };
+        PpuRenderState {
+            enabled: self.ppu_registers[0] & 0x1000 != 0,
+            blend_subtract: self.ppu_registers[0x0c / 4] & 1 != 0,
+            transparent_rgb: self.ppu_registers[0x10 / 4],
+            layers: [layer(0), layer(1), layer(2)],
         }
     }
 

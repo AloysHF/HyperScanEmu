@@ -187,27 +187,109 @@ impl Bus {
         let state = self.devices.direct_frame_state();
         output.resize(state.width * state.height, 0xff00_0000);
         output.fill(0xff00_0000);
-        if !state.enabled {
-            return Ok((state.width, state.height));
-        }
+        self.render_ppu_bitmaps(output, state.width, state.height)?;
 
-        let step = if state.interlaced { 1 } else { 2 };
-        for y in (0..state.height).step_by(step) {
-            for x in 0..state.width {
-                let pixel_index = y * state.width + x;
-                let address = state.start_address.wrapping_add((pixel_index * 2) as u32);
-                let pixel = rgb565_to_xrgb8888(self.read_u16(address)?, state.fade);
-                output[pixel_index] = pixel;
-                if !state.interlaced && y + 1 < state.height {
-                    output[pixel_index + state.width] = pixel;
+        if state.enabled {
+            let step = if state.interlaced { 1 } else { 2 };
+            for y in (0..state.height).step_by(step) {
+                for x in 0..state.width {
+                    let pixel_index = y * state.width + x;
+                    let address = state.start_address.wrapping_add((pixel_index * 2) as u32);
+                    let pixel = rgb565_to_xrgb8888(self.read_u16(address)?, 0);
+                    output[pixel_index] = pixel;
+                    if !state.interlaced && y + 1 < state.height {
+                        output[pixel_index + state.width] = pixel;
+                    }
                 }
             }
         }
+        apply_frame_fade(output, state.fade);
         Ok((state.width, state.height))
     }
 
     pub fn drain_audio_samples(&mut self, destination: &mut Vec<i16>) {
         self.devices.drain_audio_samples(destination);
+    }
+
+    fn render_ppu_bitmaps(
+        &self,
+        output: &mut [u32],
+        width: usize,
+        height: usize,
+    ) -> Result<(), EmulatorError> {
+        let state = self.devices.ppu_render_state();
+        if !state.enabled {
+            return Ok(());
+        }
+
+        for depth in 0..4 {
+            for layer in state.layers {
+                if layer.control & 9 != 9 || (layer.attribute >> 13) & 3 != depth {
+                    continue;
+                }
+                let position_x = sign_extend_position(layer.position_x, 10);
+                let position_y = sign_extend_position(layer.position_y, 9);
+                let blend = if layer.control & 0x100 != 0 {
+                    layer.blend.min(63)
+                } else {
+                    0
+                };
+                for destination_y in 0..height {
+                    let source_y = destination_y as i32 + position_y;
+                    if source_y < 0 {
+                        continue;
+                    }
+                    let line = if layer.control & 4 != 0 {
+                        0
+                    } else {
+                        source_y as u32
+                    };
+                    let line_offset = self
+                        .read_unaligned_u32(layer.number_pointer.wrapping_add(line * 4))?
+                        .wrapping_mul(2);
+                    for destination_x in 0..width {
+                        let source_x = destination_x as i32 + position_x;
+                        if source_x < 0 {
+                            continue;
+                        }
+                        let address = layer
+                            .buffer_start
+                            .wrapping_add(line_offset)
+                            .wrapping_add(source_x as u32 * 2);
+                        let raw = self.read_u16(address)?;
+                        let color = if layer.control & 0x1000 != 0 {
+                            if state.transparent_rgb & 0x1_0000 != 0
+                                && state.transparent_rgb as u16 == raw
+                            {
+                                continue;
+                            }
+                            rgb565_to_xrgb8888(raw, 0)
+                        } else {
+                            if raw & 0x8000 != 0 {
+                                continue;
+                            }
+                            argb1555_to_xrgb8888(raw)
+                        };
+                        let index = destination_y * width + destination_x;
+                        output[index] = if blend == 0 {
+                            color
+                        } else {
+                            blend_pixels(output[index], color, blend, state.blend_subtract)
+                        };
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_unaligned_u32(&self, address: u32) -> Result<u32, EmulatorError> {
+        Ok(u32::from_le_bytes([
+            self.read_u8(address)?,
+            self.read_u8(address.wrapping_add(1))?,
+            self.read_u8(address.wrapping_add(2))?,
+            self.read_u8(address.wrapping_add(3))?,
+        ]))
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
@@ -218,6 +300,46 @@ impl Bus {
 
         let offset = (address - EXTERNAL_ROM_START) as usize;
         Ok(self.firmware.bios_rom()[offset % self.firmware.bios_rom().len()])
+    }
+}
+
+fn sign_extend_position(value: u32, bits: u32) -> i32 {
+    let shift = 32 - bits;
+    ((value << shift) as i32) >> shift
+}
+
+fn argb1555_to_xrgb8888(value: u16) -> u32 {
+    let red = u32::from((value >> 10) & 0x1f) * 255 / 31;
+    let green = u32::from((value >> 5) & 0x1f) * 255 / 31;
+    let blue = u32::from(value & 0x1f) * 255 / 31;
+    0xff00_0000 | (red << 16) | (green << 8) | blue
+}
+
+fn blend_pixels(background: u32, foreground: u32, level: u8, subtract: bool) -> u32 {
+    let level = i32::from(level);
+    let blend_channel = |shift: u32| {
+        let background = ((background >> shift) & 0xff) as i32;
+        let foreground = ((foreground >> shift) & 0xff) as i32;
+        let value = if subtract {
+            background * level / 63 - foreground * (63 - level) / 63
+        } else {
+            background * level / 63 + foreground * (63 - level) / 63
+        };
+        value.clamp(0, 255) as u32
+    };
+    0xff00_0000 | (blend_channel(16) << 16) | (blend_channel(8) << 8) | blend_channel(0)
+}
+
+fn apply_frame_fade(output: &mut [u32], fade: u8) {
+    if fade == 0 {
+        return;
+    }
+    let scale = u32::from(255 - fade);
+    for pixel in output {
+        let red = ((*pixel >> 16) & 0xff) * scale / 255;
+        let green = ((*pixel >> 8) & 0xff) * scale / 255;
+        let blue = (*pixel & 0xff) * scale / 255;
+        *pixel = 0xff00_0000 | (red << 16) | (green << 8) | blue;
     }
 }
 
@@ -401,5 +523,35 @@ mod tests {
         assert_eq!(samples, [i16::MIN, i16::MAX]);
         assert_eq!(bus.read_u32(0x0805_1040).unwrap(), 0);
         assert_eq!(bus.read_u32(0x0805_1044).unwrap(), u32::from(u16::MAX));
+    }
+
+    #[test]
+    fn ppu_bitmap_layer_uses_line_table_and_rgb565_pixels() {
+        let mut bus = test_bus();
+        bus.write_u32(0x0801_0000, 0x1000).unwrap();
+        bus.write_u32(0x0801_002c, 0x1009).unwrap();
+        bus.write_u32(0x0801_0030, 0x3000).unwrap();
+        bus.write_u32(0x0801_00a0, 0x4000).unwrap();
+        bus.write_u32(0x3000, 0).unwrap();
+        bus.write_u16(0x4000, 0xf800).unwrap();
+        bus.write_u16(0x4002, 0x001f).unwrap();
+        let mut frame = Vec::new();
+
+        bus.render_frame(&mut frame).unwrap();
+
+        assert_eq!(frame[0], 0xffff_0000);
+        assert_eq!(frame[1], 0xff00_00ff);
+    }
+
+    #[test]
+    fn ppu_color_helpers_handle_alpha_blending_and_fade() {
+        assert_eq!(argb1555_to_xrgb8888(0x7c00), 0xffff_0000);
+        assert_eq!(
+            blend_pixels(0xff00_0000, 0xffff_ffff, 0, false),
+            0xffff_ffff
+        );
+        let mut frame = [0xffff_8040];
+        apply_frame_fade(&mut frame, 255);
+        assert_eq!(frame, [0xff00_0000]);
     }
 }

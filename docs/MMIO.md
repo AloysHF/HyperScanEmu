@@ -41,8 +41,9 @@ are placeholders pending a subcode conformance test.
 
 The display path schedules NTSC/PAL frames from the 27 MHz pixel clock and
 converts the selected RGB565 direct framebuffer to XRGB8888. Progressive output
-duplicates line pairs as observed. PPU palette and sprite RAM are addressable,
-but text layers and sprites are not composed yet.
+duplicates line pairs as observed. PPU bitmap layers support line tables,
+positions, RGB565/ARGB1555 transparency, depth and blending. Character tiles and
+sprites are not composed yet.
 
 The interrupt controller exposes peripheral level state using the documented
 vector-to-pending-bit mapping. Priority fields are retained and readable; the CPU

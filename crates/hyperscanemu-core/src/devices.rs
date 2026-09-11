@@ -2,7 +2,7 @@ use crate::{
     audio::{AudioDmaRequest, DacFifo},
     card::CardDevice,
     cdrom::{CdDmaRequest, CdServo},
-    video::{DirectFrameState, VideoController},
+    video::{DirectFrameState, PpuRenderState, VideoController},
     CardImage, EmulatorError, InputState,
 };
 
@@ -260,6 +260,10 @@ impl Spg290Devices {
 
     pub(crate) fn direct_frame_state(&self) -> DirectFrameState {
         self.video.direct_frame_state()
+    }
+
+    pub(crate) fn ppu_render_state(&self) -> PpuRenderState {
+        self.video.ppu_render_state()
     }
 
     pub fn cycles_until_frame_end(&self) -> u64 {
