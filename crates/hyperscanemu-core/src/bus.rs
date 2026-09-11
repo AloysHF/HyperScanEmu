@@ -1,4 +1,4 @@
-use crate::{EmulatorError, Firmware};
+use crate::{EmulatorError, Firmware, Spg290Devices};
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
 pub const DRAM_SIZE: usize = 0x0100_0000;
@@ -25,6 +25,7 @@ pub struct Bus {
     internal_sram: Box<[u8]>,
     firmware: Firmware,
     boot_source: BootSource,
+    devices: Spg290Devices,
 }
 
 impl Bus {
@@ -34,6 +35,7 @@ impl Bus {
             internal_sram: vec![0; INTERNAL_SRAM_SIZE].into_boxed_slice(),
             firmware,
             boot_source: BootSource::InternalRom,
+            devices: Spg290Devices::new(),
         }
     }
 
@@ -41,6 +43,7 @@ impl Bus {
         self.dram.fill(0);
         self.internal_sram.fill(0);
         self.boot_source = BootSource::InternalRom;
+        self.devices.reset();
     }
 
     pub fn boot_source(&self) -> BootSource {
@@ -75,6 +78,10 @@ impl Bus {
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
         ensure_aligned(address, 4, "read")?;
+        let masked = address & ADDRESS_MASK;
+        if (MMIO_START..=MMIO_END).contains(&masked) {
+            return self.devices.read_u32(masked);
+        }
         let bytes = [
             self.read_u8(address)?,
             self.read_u8(address + 1)?,
@@ -108,6 +115,10 @@ impl Bus {
 
     pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
         ensure_aligned(address, 4, "write")?;
+        let masked = address & ADDRESS_MASK;
+        if (MMIO_START..=MMIO_END).contains(&masked) {
+            return self.devices.write_u32(masked, value);
+        }
         let bytes = value.to_le_bytes();
         self.write_u8(address, bytes[0])?;
         self.write_u8(address + 1, bytes[1])?;
@@ -117,6 +128,14 @@ impl Bus {
 
     pub fn firmware_fingerprint(&self) -> u64 {
         self.firmware.fingerprint()
+    }
+
+    pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
+        self.devices.tick(cpu_cycles)
+    }
+
+    pub fn take_pending_interrupts(&mut self) -> u64 {
+        self.devices.take_pending_interrupts()
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {

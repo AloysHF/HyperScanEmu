@@ -28,6 +28,12 @@ pub enum EmulatorError {
     InvalidRegister {
         index: usize,
     },
+    InvalidControlRegister {
+        index: usize,
+    },
+    InvalidInterruptSource {
+        source: u8,
+    },
     UnsupportedInstruction {
         pc: u32,
         instruction: u32,
@@ -35,6 +41,13 @@ pub enum EmulatorError {
     },
     DivisionByZero {
         pc: u32,
+    },
+    UnknownMmio {
+        access: &'static str,
+        address: u32,
+    },
+    UnsupportedTimerMode {
+        mode: u8,
     },
     ExecutionNotImplemented,
 }
@@ -70,6 +83,12 @@ impl Display for EmulatorError {
                 "disc sector LBA {lba} is outside the {sector_count}-sector image"
             ),
             Self::InvalidRegister { index } => write!(formatter, "invalid CPU register r{index}"),
+            Self::InvalidControlRegister { index } => {
+                write!(formatter, "invalid CPU control register cr{index}")
+            }
+            Self::InvalidInterruptSource { source } => {
+                write!(formatter, "invalid interrupt source {source}")
+            }
             Self::UnsupportedInstruction {
                 pc,
                 instruction,
@@ -80,6 +99,12 @@ impl Display for EmulatorError {
             ),
             Self::DivisionByZero { pc } => {
                 write!(formatter, "division by zero at 0x{pc:08x}")
+            }
+            Self::UnknownMmio { access, address } => {
+                write!(formatter, "unknown MMIO {access} at 0x{address:08x}")
+            }
+            Self::UnsupportedTimerMode { mode } => {
+                write!(formatter, "unsupported timer mode {mode}")
             }
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")

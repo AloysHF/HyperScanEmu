@@ -23,6 +23,7 @@ pub enum CpuException {
     Syscall = 7,
     ReservedInstruction = 9,
     Trap = 10,
+    Interrupt = 20,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,7 @@ pub struct Score7 {
     pc: u32,
     previous_pc: u32,
     cycles: u64,
+    pending_interrupts: u64,
 }
 
 impl Default for Score7 {
@@ -60,6 +62,7 @@ impl Score7 {
             pc: RESET_PC,
             previous_pc: RESET_PC,
             cycles: 0,
+            pending_interrupts: 0,
         };
         cpu.control[CR_EXCEPTION_VECTOR] = RESET_PC;
         cpu
@@ -98,8 +101,34 @@ impl Score7 {
         self.cycles
     }
 
+    pub fn set_control_register(&mut self, index: usize, value: u32) -> Result<(), EmulatorError> {
+        let register = self
+            .control
+            .get_mut(index)
+            .ok_or(EmulatorError::InvalidControlRegister { index })?;
+        *register = value;
+        Ok(())
+    }
+
+    pub fn request_interrupt(&mut self, source: u8) -> Result<(), EmulatorError> {
+        if !(1..64).contains(&source) {
+            return Err(EmulatorError::InvalidInterruptSource { source });
+        }
+        self.pending_interrupts |= 1_u64 << source;
+        Ok(())
+    }
+
     pub fn step(&mut self, bus: &mut Bus) -> Result<StepOutcome, EmulatorError> {
         self.previous_pc = self.pc;
+        if self.control[CR_PSR] & 1 != 0 && self.pending_interrupts != 0 {
+            let source = (63 - self.pending_interrupts.leading_zeros()) as u8;
+            self.pending_interrupts &= !(1_u64 << source);
+            self.enter_interrupt(source);
+            return Ok(StepOutcome::Exception {
+                cause: CpuException::Interrupt,
+                width: 0,
+            });
+        }
         let raw = bus.read_u32(self.pc & !3)?;
         let format = ((raw >> 30) & 2) | ((raw >> 15) & 1);
         let outcome = match format {
@@ -842,6 +871,19 @@ impl Score7 {
         self.pc = (self.control[CR_EXCEPTION_VECTOR] & 0xffff_0000).wrapping_add(0x200);
     }
 
+    fn enter_interrupt(&mut self, source: u8) {
+        self.enter_exception(CpuException::Interrupt);
+        self.control[CR_ECR] = (self.control[CR_ECR] & !0x00fc_0000) | (u32::from(source) << 18);
+        let shift = if self.control[CR_EXCEPTION_VECTOR] & 1 != 0 {
+            4
+        } else {
+            2
+        };
+        self.pc = (self.control[CR_EXCEPTION_VECTOR] & 0xffff_0000)
+            .wrapping_add(0x200)
+            .wrapping_add(u32::from(source) << shift);
+    }
+
     fn unsupported<T>(&self, instruction: u32, width: u8) -> Result<T, EmulatorError> {
         Err(EmulatorError::UnsupportedInstruction {
             pc: self.previous_pc,
@@ -988,5 +1030,26 @@ mod tests {
         );
         assert_eq!(cpu.pc(), 0x9f00_0200);
         assert_eq!(cpu.control_register(CR_EPC), Some(0));
+    }
+
+    #[test]
+    fn services_highest_pending_interrupt_when_enabled() {
+        let mut bus = test_bus();
+        let mut cpu = Score7::new();
+        cpu.set_pc(0x100);
+        cpu.set_control_register(CR_PSR, 1).unwrap();
+        cpu.request_interrupt(39).unwrap();
+        cpu.request_interrupt(56).unwrap();
+
+        assert_eq!(
+            cpu.step(&mut bus).unwrap(),
+            StepOutcome::Exception {
+                cause: CpuException::Interrupt,
+                width: 0,
+            }
+        );
+        assert_eq!(cpu.pc(), 0x9f00_0000 + 0x200 + 56 * 4);
+        assert_eq!(cpu.control_register(CR_EPC), Some(0x100));
+        assert_eq!(cpu.control_register(CR_ECR).unwrap() >> 18 & 0x3f, 56);
     }
 }

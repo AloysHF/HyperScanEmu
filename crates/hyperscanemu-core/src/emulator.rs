@@ -1,4 +1,7 @@
-use crate::{Bus, DiscImage, EmulatorError, Firmware, InputState, Score7, StepOutcome};
+use crate::{
+    Bus, DiscImage, EmulatorError, Firmware, InputState, Score7, StepOutcome,
+    CYCLES_PER_INSTRUCTION_ESTIMATE,
+};
 
 pub const DISPLAY_WIDTH: usize = 640;
 pub const DISPLAY_HEIGHT: usize = 480;
@@ -70,7 +73,17 @@ impl Emulator {
     }
 
     pub fn step(&mut self) -> Result<StepOutcome, EmulatorError> {
-        self.cpu.step(&mut self.bus)
+        let outcome = self.cpu.step(&mut self.bus)?;
+        if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
+            self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+        }
+        let pending = self.bus.take_pending_interrupts();
+        for source in 1..64 {
+            if pending & (1_u64 << source) != 0 {
+                self.cpu.request_interrupt(source)?;
+            }
+        }
+        Ok(outcome)
     }
 
     pub fn run_instructions(&mut self, budget: u64) -> Result<ExecutionReport, EmulatorError> {
