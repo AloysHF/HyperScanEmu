@@ -27,5 +27,5 @@ hyperscan.bin  1048576 bytes
 ```
 
 The core currently reports no serialization or exposed memory blocks. Audio
-callbacks are wired, but remain silent until the SPU implementation lands. Card
-image selection and atomic card saving also remain frontend work.
+callbacks receive DAC FIFO output; the 24-channel hardware synthesizer remains
+silent. Card image selection and atomic card saving also remain frontend work.

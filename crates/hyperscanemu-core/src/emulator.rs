@@ -131,6 +131,7 @@ impl Emulator {
         let instructions = cycles.div_ceil(CYCLES_PER_INSTRUCTION_ESTIMATE);
         self.run_instructions(instructions)?;
         let (width, height) = self.bus.render_frame(&mut self.framebuffer)?;
+        self.bus.drain_audio_samples(&mut self.audio_samples);
         self.display_width = width;
         self.display_height = height;
         self.frame_index = self.frame_index.wrapping_add(1);

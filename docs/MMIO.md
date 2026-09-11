@@ -6,6 +6,7 @@ and unsupported access widths stop execution with the access type and address.
 Implemented today:
 
 - PPU register/RAM windows at `0x0801_0000`, with cycle-driven VBlank status and IRQ source 53;
+- DAC FIFO control at `0x0805_1034` through `0x0805_1474`, plus clock and buffer registers;
 - TVE mode/fade control, triple framebuffer addresses, buffer selection and MIU ready status;
 - interrupt pending, software interrupt and priority registers at `0x080a_0000` through `0x080a_001c`;
 - CD servo registers at `0x0806_0004` through `0x0806_006c`;
@@ -47,3 +48,7 @@ The interrupt controller exposes peripheral level state using the documented
 vector-to-pending-bit mapping. Priority fields are retained and readable; the CPU
 still uses provisional highest-vector arbitration until priority conformance
 tests are available.
+
+The DAC follows its 54 MHz hardware clock, reads unsigned PCM from the configured
+ring buffer, emits signed stereo samples and raises SPU IRQ source 63 at each
+half-buffer boundary. Hardware synthesis registers remain future work.

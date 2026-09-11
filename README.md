@@ -33,8 +33,8 @@ cargo build --workspace --release
 
 The core includes a checked memory bus, an initial S+Core interpreter, timed
 peripherals, the firmware-visible dual-controller and RFID protocols, CD sector
-DMA, and an initial RGB565 direct-framebuffer display path. PPU text and sprite
-composition remain incomplete.
+DMA, DAC ring-buffer audio, and an initial RGB565 direct-framebuffer display
+path. PPU text/sprite composition and SPU hardware synthesis remain incomplete.
 
 Run a bounded, deterministic firmware trace with:
 

@@ -1,4 +1,5 @@
 use crate::{
+    audio::{AudioDmaRequest, DacFifo},
     card::CardDevice,
     cdrom::{CdDmaRequest, CdServo},
     video::{DirectFrameState, VideoController},
@@ -11,6 +12,7 @@ pub const TIMER_INTERRUPT_SOURCE: u8 = 56;
 pub const I2C_INTERRUPT_SOURCE: u8 = 39;
 pub const CD_INTERRUPT_SOURCE: u8 = 60;
 pub const PPU_INTERRUPT_SOURCE: u8 = 53;
+pub const SPU_INTERRUPT_SOURCE: u8 = 63;
 
 const CD_BASE: u32 = 0x0806_0000;
 const CD_END: u32 = 0x0806_ffff;
@@ -32,6 +34,7 @@ const INTERRUPT_PRIORITY_END: u32 = 0x080a_001c;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
+    audio: DacFifo,
     cd: CdServo,
     video: VideoController,
     i2c: I2cController,
@@ -54,6 +57,7 @@ impl Default for Spg290Devices {
 impl Spg290Devices {
     pub fn new() -> Self {
         Self {
+            audio: DacFifo::default(),
             cd: CdServo::default(),
             video: VideoController::default(),
             i2c: I2cController::default(),
@@ -79,6 +83,9 @@ impl Spg290Devices {
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
+        if let Some(value) = self.audio.read(address) {
+            return Ok(value);
+        }
         if let Some(value) = self.video.read(address) {
             return Ok(value);
         }
@@ -126,6 +133,12 @@ impl Spg290Devices {
     }
 
     pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
+        if self.audio.write(address, value).is_some() {
+            if !self.audio.interrupt_pending() {
+                self.pending_interrupts &= !(1_u64 << SPU_INTERRUPT_SOURCE);
+            }
+            return Ok(());
+        }
         if self.video.write(address, value).is_some() {
             if !self.video.interrupt_pending() {
                 self.pending_interrupts &= !(1_u64 << PPU_INTERRUPT_SOURCE);
@@ -198,6 +211,9 @@ impl Spg290Devices {
 
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
         self.card.tick(cpu_cycles);
+        if self.audio.tick(cpu_cycles) {
+            self.pending_interrupts |= 1_u64 << SPU_INTERRUPT_SOURCE;
+        }
         self.cd.tick(cpu_cycles)?;
         if self.video.tick(cpu_cycles) {
             self.pending_interrupts |= 1_u64 << PPU_INTERRUPT_SOURCE;
@@ -250,6 +266,18 @@ impl Spg290Devices {
         self.video.cycles_until_frame_end()
     }
 
+    pub(crate) fn take_audio_dma_request(&mut self) -> Option<AudioDmaRequest> {
+        self.audio.take_dma_request()
+    }
+
+    pub(crate) fn complete_audio_dma(&mut self, left: u16, right: u16) {
+        self.audio.complete_dma(left, right);
+    }
+
+    pub(crate) fn drain_audio_samples(&mut self, destination: &mut Vec<i16>) {
+        self.audio.drain_samples(destination);
+    }
+
     fn cd_disc_sectors(&self) -> Option<u32> {
         self.cd.disc_sector_count()
     }
@@ -267,6 +295,9 @@ impl Spg290Devices {
         }
         if self.video.interrupt_pending() || self.gpu_software_interrupt {
             sources |= 1_u64 << PPU_INTERRUPT_SOURCE;
+        }
+        if self.audio.interrupt_pending() {
+            sources |= 1_u64 << SPU_INTERRUPT_SOURCE;
         }
         sources
     }

@@ -134,7 +134,13 @@ impl Bus {
     }
 
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
-        self.devices.tick(cpu_cycles)
+        self.devices.tick(cpu_cycles)?;
+        while let Some(request) = self.devices.take_audio_dma_request() {
+            let left = self.read_u16(request.left_address)?;
+            let right = self.read_u16(request.right_address)?;
+            self.devices.complete_audio_dma(left, right);
+        }
+        Ok(())
     }
 
     pub fn take_pending_interrupts(&mut self) -> u64 {
@@ -198,6 +204,10 @@ impl Bus {
             }
         }
         Ok((state.width, state.height))
+    }
+
+    pub fn drain_audio_samples(&mut self, destination: &mut Vec<i16>) {
+        self.devices.drain_audio_samples(destination);
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
@@ -369,5 +379,27 @@ mod tests {
         assert_eq!(frame[1], 0xff00_ff00);
         assert_eq!(frame[320], 0xffff_0000);
         assert_eq!(frame[321], 0xff00_ff00);
+    }
+
+    #[test]
+    fn dac_dma_reads_unsigned_interleaved_pcm() {
+        let mut bus = test_bus();
+        bus.write_u16(0x2000, 0).unwrap();
+        bus.write_u16(0x2002, u16::MAX).unwrap();
+        bus.write_u32(0x0821_003c, 3).unwrap();
+        bus.write_u32(0x0805_1474, !3).unwrap();
+        bus.write_u32(0x0805_1080, 0x2000).unwrap();
+        bus.write_u32(0x0805_1084, 0).unwrap();
+        bus.write_u32(0x0805_1064, 1_223).unwrap();
+        bus.write_u32(0x0805_1088, 0x4007).unwrap();
+        bus.write_u32(0x0805_1034, 0x1003).unwrap();
+
+        bus.tick(2_448).unwrap();
+        let mut samples = Vec::new();
+        bus.drain_audio_samples(&mut samples);
+
+        assert_eq!(samples, [i16::MIN, i16::MAX]);
+        assert_eq!(bus.read_u32(0x0805_1040).unwrap(), 0);
+        assert_eq!(bus.read_u32(0x0805_1044).unwrap(), u32::from(u16::MAX));
     }
 }
