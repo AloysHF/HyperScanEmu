@@ -25,6 +25,8 @@ pub struct Emulator {
     audio_samples: Vec<i16>,
     input: InputState,
     frame_index: u64,
+    display_width: usize,
+    display_height: usize,
 }
 impl Emulator {
     pub fn new(firmware: Firmware) -> Self {
@@ -36,6 +38,8 @@ impl Emulator {
             audio_samples: Vec::new(),
             input: InputState::default(),
             frame_index: 0,
+            display_width: 320,
+            display_height: 240,
         }
     }
 
@@ -47,6 +51,8 @@ impl Emulator {
         self.audio_samples.clear();
         self.input = InputState::default();
         self.frame_index = 0;
+        self.display_width = 320;
+        self.display_height = 240;
     }
 
     pub fn set_input(&mut self, input: InputState) {
@@ -121,7 +127,14 @@ impl Emulator {
     }
 
     pub fn run_frame(&mut self) -> Result<(), EmulatorError> {
-        Err(EmulatorError::ExecutionNotImplemented)
+        let cycles = self.bus.cycles_until_frame_end();
+        let instructions = cycles.div_ceil(CYCLES_PER_INSTRUCTION_ESTIMATE);
+        self.run_instructions(instructions)?;
+        let (width, height) = self.bus.render_frame(&mut self.framebuffer)?;
+        self.display_width = width;
+        self.display_height = height;
+        self.frame_index = self.frame_index.wrapping_add(1);
+        Ok(())
     }
 
     pub fn framebuffer(&self) -> &[u32] {
@@ -136,6 +149,10 @@ impl Emulator {
         self.frame_index
     }
 
+    pub fn display_size(&self) -> (usize, usize) {
+        (self.display_width, self.display_height)
+    }
+
     pub fn firmware_fingerprint(&self) -> u64 {
         self.bus.firmware_fingerprint()
     }
@@ -147,10 +164,10 @@ mod tests {
     use crate::{BIOS_ROM_SIZE, INTERNAL_ROM_SIZE};
 
     fn test_firmware() -> Firmware {
-        let mut internal = vec![0xff; INTERNAL_ROM_SIZE];
-        let mut bios = vec![0xff; BIOS_ROM_SIZE];
-        internal[0] = 0;
-        bios[0] = 0;
+        let mut internal = vec![0; INTERNAL_ROM_SIZE];
+        let mut bios = vec![0; BIOS_ROM_SIZE];
+        internal[INTERNAL_ROM_SIZE - 1] = 1;
+        bios[BIOS_ROM_SIZE - 1] = 1;
         Firmware::from_parts(&internal, &bios).unwrap()
     }
 
@@ -179,12 +196,13 @@ mod tests {
     }
 
     #[test]
-    fn execution_gap_remains_explicit() {
+    fn run_frame_advances_video_timing() {
         let mut emulator = Emulator::new(test_firmware());
-        assert_eq!(
-            emulator.run_frame(),
-            Err(EmulatorError::ExecutionNotImplemented)
-        );
+        emulator.run_frame().unwrap();
+
+        assert_eq!(emulator.frame_index(), 1);
+        assert_eq!(emulator.display_size(), (320, 240));
+        assert_eq!(emulator.framebuffer().len(), 320 * 240);
     }
 
     #[test]

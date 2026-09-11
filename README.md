@@ -31,9 +31,10 @@ cargo test --workspace
 cargo build --workspace --release
 ```
 
-The core includes a checked memory bus, an initial S+Core interpreter, timers and
-the firmware-visible dual-controller I²C protocol. Frame rendering remains
-`ExecutionNotImplemented` until the display pipeline is connected.
+The core includes a checked memory bus, an initial S+Core interpreter, timed
+peripherals, the firmware-visible dual-controller and RFID protocols, CD sector
+DMA, and an initial RGB565 direct-framebuffer display path. PPU text and sprite
+composition remain incomplete.
 
 Run a bounded, deterministic firmware trace with:
 

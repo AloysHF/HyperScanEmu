@@ -5,6 +5,8 @@ and unsupported access widths stop execution with the access type and address.
 
 Implemented today:
 
+- PPU register/RAM windows at `0x0801_0000`, with cycle-driven VBlank status and IRQ source 53;
+- TVE mode/fade control, triple framebuffer addresses, buffer selection and MIU ready status;
 - CD servo registers at `0x0806_0004` through `0x0806_006c`;
 - deterministic 1×/2×/4×/8× sector scheduling, raw-sector ring-buffer DMA and IRQ source 60;
 - firmware-visible CD DSP commands, program memory, disc identification and single-track Q subchannel;
@@ -34,3 +36,8 @@ implemented with framing, odd parity and protocol CRC responses.
 The CD path currently supports the validated single MODE1 data-track layout.
 CD audio requests remain an explicit error, and generated Q-subchannel CRC bytes
 are placeholders pending a subcode conformance test.
+
+The display path schedules NTSC/PAL frames from the 27 MHz pixel clock and
+converts the selected RGB565 direct framebuffer to XRGB8888. Progressive output
+duplicates line pairs as observed. PPU palette and sprite RAM are addressable,
+but text layers and sprites are not composed yet.

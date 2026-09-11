@@ -1,6 +1,7 @@
 use crate::{
     card::CardDevice,
     cdrom::{CdDmaRequest, CdServo},
+    video::{DirectFrameState, VideoController},
     CardImage, EmulatorError, InputState,
 };
 
@@ -9,6 +10,7 @@ pub const PERIPHERAL_CLOCK_HZ: u64 = 27_000_000;
 pub const TIMER_INTERRUPT_SOURCE: u8 = 56;
 pub const I2C_INTERRUPT_SOURCE: u8 = 39;
 pub const CD_INTERRUPT_SOURCE: u8 = 60;
+pub const PPU_INTERRUPT_SOURCE: u8 = 53;
 
 const CD_BASE: u32 = 0x0806_0000;
 const CD_END: u32 = 0x0806_ffff;
@@ -25,6 +27,7 @@ const GPIO_INPUT: u32 = 0x0820_0068;
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
     cd: CdServo,
+    video: VideoController,
     i2c: I2cController,
     card: CardDevice,
     gpio_output: u32,
@@ -43,6 +46,7 @@ impl Spg290Devices {
     pub fn new() -> Self {
         Self {
             cd: CdServo::default(),
+            video: VideoController::default(),
             i2c: I2cController::default(),
             card: CardDevice::default(),
             gpio_output: 0,
@@ -63,6 +67,9 @@ impl Spg290Devices {
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
+        if let Some(value) = self.video.read(address) {
+            return Ok(value);
+        }
         if (CD_BASE..=CD_END).contains(&address) {
             return self
                 .cd
@@ -90,6 +97,12 @@ impl Spg290Devices {
     }
 
     pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
+        if self.video.write(address, value).is_some() {
+            if !self.video.interrupt_pending() {
+                self.pending_interrupts &= !(1_u64 << PPU_INTERRUPT_SOURCE);
+            }
+            return Ok(());
+        }
         if (CD_BASE..=CD_END).contains(&address) {
             self.cd
                 .write(address - CD_BASE, value)
@@ -135,6 +148,9 @@ impl Spg290Devices {
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
         self.card.tick(cpu_cycles);
         self.cd.tick(cpu_cycles)?;
+        if self.video.tick(cpu_cycles) {
+            self.pending_interrupts |= 1_u64 << PPU_INTERRUPT_SOURCE;
+        }
         if self.i2c.tick(cpu_cycles) {
             self.pending_interrupts |= 1_u64 << I2C_INTERRUPT_SOURCE;
         }
@@ -173,6 +189,14 @@ impl Spg290Devices {
     pub(crate) fn complete_cd_dma(&mut self, next_pointer: u32) {
         self.cd.complete_dma(next_pointer);
         self.pending_interrupts |= 1_u64 << CD_INTERRUPT_SOURCE;
+    }
+
+    pub(crate) fn direct_frame_state(&self) -> DirectFrameState {
+        self.video.direct_frame_state()
+    }
+
+    pub fn cycles_until_frame_end(&self) -> u64 {
+        self.video.cycles_until_frame_end()
     }
 
     fn cd_disc_sectors(&self) -> Option<u32> {

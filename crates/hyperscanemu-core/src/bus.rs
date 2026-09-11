@@ -1,4 +1,7 @@
-use crate::{CardImage, DiscImage, EmulatorError, Firmware, InputState, Spg290Devices};
+use crate::{
+    video::rgb565_to_xrgb8888, CardImage, DiscImage, EmulatorError, Firmware, InputState,
+    Spg290Devices,
+};
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
 pub const DRAM_SIZE: usize = 0x0100_0000;
@@ -170,6 +173,33 @@ impl Bus {
         Ok(())
     }
 
+    pub fn cycles_until_frame_end(&self) -> u64 {
+        self.devices.cycles_until_frame_end()
+    }
+
+    pub fn render_frame(&self, output: &mut Vec<u32>) -> Result<(usize, usize), EmulatorError> {
+        let state = self.devices.direct_frame_state();
+        output.resize(state.width * state.height, 0xff00_0000);
+        output.fill(0xff00_0000);
+        if !state.enabled {
+            return Ok((state.width, state.height));
+        }
+
+        let step = if state.interlaced { 1 } else { 2 };
+        for y in (0..state.height).step_by(step) {
+            for x in 0..state.width {
+                let pixel_index = y * state.width + x;
+                let address = state.start_address.wrapping_add((pixel_index * 2) as u32);
+                let pixel = rgb565_to_xrgb8888(self.read_u16(address)?, state.fade);
+                output[pixel_index] = pixel;
+                if !state.interlaced && y + 1 < state.height {
+                    output[pixel_index + state.width] = pixel;
+                }
+            }
+        }
+        Ok((state.width, state.height))
+    }
+
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
         if self.boot_source == BootSource::InternalRom && address >= BOOT_WINDOW_START {
             let offset = (address - BOOT_WINDOW_START) as usize;
@@ -321,5 +351,23 @@ mod tests {
         assert_eq!(bus.read_u32(0x10c).unwrap(), 0x0100_0200);
         assert_eq!(bus.read_u32(0x0806_0068).unwrap(), 0x100);
         assert_eq!(bus.take_pending_interrupts(), 1_u64 << CD_INTERRUPT_SOURCE);
+    }
+
+    #[test]
+    fn direct_framebuffer_renders_rgb565_and_progressive_line_pairs() {
+        let mut bus = test_bus();
+        bus.write_u32(0x0807_0000, 0x1000).unwrap();
+        bus.write_u32(0x0809_0020, 0).unwrap();
+        bus.write_u16(0x1000, 0xf800).unwrap();
+        bus.write_u16(0x1002, 0x07e0).unwrap();
+        let mut frame = Vec::new();
+
+        let dimensions = bus.render_frame(&mut frame).unwrap();
+
+        assert_eq!(dimensions, (320, 240));
+        assert_eq!(frame[0], 0xffff_0000);
+        assert_eq!(frame[1], 0xff00_ff00);
+        assert_eq!(frame[320], 0xffff_0000);
+        assert_eq!(frame[321], 0xff00_ff00);
     }
 }
