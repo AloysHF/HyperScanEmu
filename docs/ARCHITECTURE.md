@@ -15,6 +15,7 @@ libretro adapter ---------------------+
 ## Current boundary
 
 - `hyperscanemu-core` owns target behavior and deterministic state.
+- `hyperscanemu-media` owns bounded host I/O plus strict BIN/CUE/ZIP resolution.
 - `hyperscanemu` owns host paths, CLI, future window/audio devices, and headless driving.
 - `hyperscanemu-libretro` owns only the C ABI and frontend translation.
 
@@ -31,6 +32,6 @@ windowing, host audio and physical controller mappings stay in adapters. Unknown
 instructions and MMIO accesses stop execution with structured diagnostics; they
 are never silently treated as successful operations.
 
-`DiscImage` validates raw sectors and exposes only their 2048-byte user-data
-payload. Future CD-servo emulation will consume that interface, so sector framing,
-CUE path resolution and host files do not leak into the device model.
+`DiscImage` validates raw sectors and exposes their raw framing plus 2048-byte
+user payload. The CD servo consumes that interface for DMA, while CUE path
+resolution, ZIP decompression and host files remain outside the device model.

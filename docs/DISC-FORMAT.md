@@ -1,8 +1,9 @@
 # Disc image format
 
-HyperScanEmu currently accepts the data track as a raw `MODE1/2352` BIN image.
-The accompanying CUE sheet is intentionally handled by the host adapter rather
-than the emulator core.
+HyperScanEmu accepts a raw `MODE1/2352` BIN image, a single-track CUE sheet, or a
+ZIP containing exactly one such CUE and its referenced BIN. Host media loading
+enforces bounded reads, safe relative paths and an uncompressed size limit before
+the emulator core receives bytes.
 
 The core validates every sector before exposing user data:
 
@@ -15,6 +16,6 @@ The core validates every sector before exposing user data:
 
 Successful validation exposes both the original 2352-byte sector and exactly
 2048 user bytes per LBA. The CD servo consumes raw sectors for ring-buffer DMA,
-scheduled at the selected drive speed. EDC/ECC checking and full CUE parsing are
-tracked separately; callers must not treat a renamed ISO or arbitrary binary file
-as supported media.
+scheduled at the selected drive speed. EDC/ECC checking and multi-track CUE
+support are tracked separately; callers must not treat a renamed ISO or arbitrary
+binary file as supported media.

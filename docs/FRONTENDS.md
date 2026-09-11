@@ -5,9 +5,9 @@
 The `hyperscanemu` binary supports three deterministic workflows:
 
 ```text
-hyperscanemu inspect-disc <track.bin>
+hyperscanemu inspect-disc <media.bin|media.cue|media.zip>
 hyperscanemu trace <internal-rom.bin> <bios.bin> [steps]
-hyperscanemu run <internal-rom.bin> <bios.bin> <track.bin> [frames]
+hyperscanemu run <internal-rom.bin> <bios.bin> <media> [frames]
 ```
 
 `run` executes complete video frames and prints the final geometry, framebuffer
@@ -17,7 +17,7 @@ the interactive standalone backend is still under development.
 ## libretro
 
 The `hyperscanemu-libretro` crate exports the complete base libretro lifecycle,
-loads full-path raw BIN tracks, polls two joypads plus left analog sticks, and
+loads full-path BIN/CUE/ZIP media, polls two joypads plus left analog sticks, and
 submits dynamic-size XRGB8888 frames. Place legally dumped firmware in the
 frontend system directory as:
 

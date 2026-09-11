@@ -4,6 +4,7 @@ members = [
     "crates/hyperscanemu-core",
     "crates/hyperscanemu",
     "crates/hyperscanemu-libretro",
+    "crates/hyperscanemu-media",
 ]
 
 

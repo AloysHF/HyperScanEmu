@@ -5,9 +5,10 @@ use std::ptr;
 use std::sync::Mutex;
 
 use hyperscanemu_core::{
-    ControllerButton, ControllerState, DiscImage, Emulator, Firmware, InputState, DISPLAY_HEIGHT,
+    ControllerButton, ControllerState, Emulator, Firmware, InputState, DISPLAY_HEIGHT,
     DISPLAY_WIDTH,
 };
+use hyperscanemu_media::load_disc;
 
 const RETRO_API_VERSION: u32 = 1;
 const RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: u32 = 9;
@@ -164,7 +165,7 @@ pub unsafe extern "C" fn retro_get_system_info(info: *mut RetroSystemInfo) {
         *info = RetroSystemInfo {
             library_name: c"HyperScanEmu".as_ptr(),
             library_version: c"0.1.0".as_ptr(),
-            valid_extensions: c"bin".as_ptr(),
+            valid_extensions: c"bin|cue|zip".as_ptr(),
             need_fullpath: true,
             block_extract: false,
         };
@@ -285,7 +286,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
         let internal = fs::read(system_directory.join("spg290.bin")).ok()?;
         let bios = fs::read(system_directory.join("hyperscan.bin")).ok()?;
         let firmware = Firmware::from_parts(&internal, &bios).ok()?;
-        let disc = DiscImage::from_mode1_2352(fs::read(path).ok()?).ok()?;
+        let disc = load_disc(path).ok()?;
         let mut emulator = Emulator::new(firmware);
         emulator.attach_disc(disc);
         Some(emulator)
@@ -421,7 +422,7 @@ mod tests {
             unsafe { CStr::from_ptr(info.valid_extensions) }
                 .to_str()
                 .unwrap(),
-            "bin"
+            "bin|cue|zip"
         );
     }
 }

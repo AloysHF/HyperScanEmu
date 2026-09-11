@@ -18,6 +18,7 @@ These values are hypotheses until supported by evidence in `tmp/PROJECT-STATUS.m
 ```text
 crates/
 ├── hyperscanemu-core/      # Platform-independent emulator state and execution
+├── hyperscanemu-media/     # Checked BIN/CUE/ZIP host-media loading
 ├── hyperscanemu/           # Headless/standalone host adapter
 └── hyperscanemu-libretro/  # libretro ABI boundary
 ```
@@ -45,16 +46,16 @@ cargo run -p hyperscanemu -- trace <internal-rom.bin> <bios.bin> [steps]
 Firmware and game media are not included. Obtain and dump them legally from
 hardware and media you own.
 
-Validate a raw disc track without firmware:
+Validate raw BIN, CUE or packaged ZIP media without firmware:
 
 ```bash
-cargo run -p hyperscanemu -- inspect-disc <track.bin>
+cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
 ```
 
 Run a deterministic number of complete frames with validated media:
 
 ```bash
-cargo run -p hyperscanemu -- run <internal-rom.bin> <bios.bin> <track.bin> [frames]
+cargo run -p hyperscanemu -- run <internal-rom.bin> <bios.bin> <media> [frames]
 ```
 
 See `docs/FRONTENDS.md` for libretro firmware placement and current frontend

@@ -11,4 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 hyperscanemu-core = { path = "../hyperscanemu-core" }
-
+hyperscanemu-media = { path = "../hyperscanemu-media" }
