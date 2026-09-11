@@ -35,10 +35,10 @@ The loader already rejects truncated and uniform blank firmware dumps. The core
 still returns `ExecutionNotImplemented` until the first S+Core execution slice is
 connected to the checked memory bus.
 
-Run the current headless probe with:
+Run a bounded, deterministic firmware trace with:
 
 ```bash
-cargo run -p hyperscanemu -- <internal-rom.bin> <bios.bin>
+cargo run -p hyperscanemu -- trace <internal-rom.bin> <bios.bin> [steps]
 ```
 
 Firmware and game media are not included. Obtain and dump them legally from
