@@ -25,6 +25,17 @@ pub enum EmulatorError {
         lba: u32,
         sector_count: u32,
     },
+    InvalidRegister {
+        index: usize,
+    },
+    UnsupportedInstruction {
+        pc: u32,
+        instruction: u32,
+        width: u8,
+    },
+    DivisionByZero {
+        pc: u32,
+    },
     ExecutionNotImplemented,
 }
 
@@ -58,6 +69,18 @@ impl Display for EmulatorError {
                 formatter,
                 "disc sector LBA {lba} is outside the {sector_count}-sector image"
             ),
+            Self::InvalidRegister { index } => write!(formatter, "invalid CPU register r{index}"),
+            Self::UnsupportedInstruction {
+                pc,
+                instruction,
+                width,
+            } => write!(
+                formatter,
+                "unsupported {width}-byte instruction 0x{instruction:08x} at 0x{pc:08x}"
+            ),
+            Self::DivisionByZero { pc } => {
+                write!(formatter, "division by zero at 0x{pc:08x}")
+            }
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")
             }
