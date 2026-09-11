@@ -1,4 +1,4 @@
-use crate::{EmulatorError, InputState};
+use crate::{card::CardDevice, CardImage, EmulatorError, InputState};
 
 pub const CPU_CLOCK_HZ: u64 = 108_000_000;
 pub const PERIPHERAL_CLOCK_HZ: u64 = 27_000_000;
@@ -12,10 +12,14 @@ const TIMER_BLOCK_SIZE: u32 = 0x1000;
 const TIMER_COUNT: usize = 6;
 const TIMER_GATE_BASE: u32 = 0x0821_006c;
 const TIMER_CLOCK_SELECT: u32 = 0x0821_00e4;
+const GPIO_OUTPUT: u32 = 0x0820_0024;
+const GPIO_INPUT: u32 = 0x0820_0068;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
     i2c: I2cController,
+    card: CardDevice,
+    gpio_output: u32,
     timers: [Timer; TIMER_COUNT],
     timer_clock_select: u32,
     pending_interrupts: u64,
@@ -31,6 +35,8 @@ impl Spg290Devices {
     pub fn new() -> Self {
         Self {
             i2c: I2cController::default(),
+            card: CardDevice::default(),
+            gpio_output: 0,
             timers: std::array::from_fn(|_| Timer::default()),
             timer_clock_select: 0,
             pending_interrupts: 0,
@@ -38,12 +44,22 @@ impl Spg290Devices {
     }
 
     pub fn reset(&mut self) {
+        let card = self.card.eject();
         *self = Self::new();
+        if let Some(card) = card {
+            self.card.insert(card);
+        }
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
         if (I2C_BASE..=I2C_END).contains(&address) {
             return self.i2c.read(address - I2C_BASE);
+        }
+        if address == GPIO_OUTPUT {
+            return Ok(self.gpio_output);
+        }
+        if address == GPIO_INPUT {
+            return Ok(u32::from(self.card.read_line()));
         }
         if let Some((timer, offset)) = timer_address(address) {
             return self.timers[timer]
@@ -62,6 +78,11 @@ impl Spg290Devices {
             if !self.i2c.interrupt_pending() {
                 self.pending_interrupts &= !(1_u64 << I2C_INTERRUPT_SOURCE);
             }
+            return Ok(());
+        }
+        if address == GPIO_OUTPUT {
+            self.gpio_output = value;
+            self.card.write_line(value & 2 != 0);
             return Ok(());
         }
         if let Some((timer, offset)) = timer_address(address) {
@@ -86,6 +107,7 @@ impl Spg290Devices {
     }
 
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
+        self.card.tick(cpu_cycles);
         if self.i2c.tick(cpu_cycles) {
             self.pending_interrupts |= 1_u64 << I2C_INTERRUPT_SOURCE;
         }
@@ -103,6 +125,14 @@ impl Spg290Devices {
 
     pub fn set_input(&mut self, input: InputState) {
         self.i2c.set_input(input);
+    }
+
+    pub fn insert_card(&mut self, card: CardImage) -> Option<CardImage> {
+        self.card.insert(card)
+    }
+
+    pub fn eject_card(&mut self) -> Option<CardImage> {
+        self.card.eject()
     }
 
     fn update_timer_clocks(&mut self) {

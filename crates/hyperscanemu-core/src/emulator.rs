@@ -1,5 +1,5 @@
 use crate::{
-    Bus, DiscImage, EmulatorError, Firmware, InputState, Score7, StepOutcome,
+    Bus, CardImage, DiscImage, EmulatorError, Firmware, InputState, Score7, StepOutcome,
     CYCLES_PER_INSTRUCTION_ESTIMATE,
 };
 
@@ -59,6 +59,14 @@ impl Emulator {
 
     pub fn eject_disc(&mut self) -> Option<DiscImage> {
         self.disc.take()
+    }
+
+    pub fn insert_card(&mut self, card: CardImage) -> Option<CardImage> {
+        self.bus.insert_card(card)
+    }
+
+    pub fn eject_card(&mut self) -> Option<CardImage> {
+        self.bus.eject_card()
     }
 
     pub fn disc(&self) -> Option<&DiscImage> {

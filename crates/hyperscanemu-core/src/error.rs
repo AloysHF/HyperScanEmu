@@ -21,6 +21,10 @@ pub enum EmulatorError {
         lba: u32,
         reason: &'static str,
     },
+    InvalidCardSize {
+        expected: usize,
+        actual: usize,
+    },
     DiscSectorOutOfRange {
         lba: u32,
         sector_count: u32,
@@ -82,6 +86,12 @@ impl Display for EmulatorError {
                 formatter,
                 "disc sector LBA {lba} is outside the {sector_count}-sector image"
             ),
+            Self::InvalidCardSize { expected, actual } => {
+                write!(
+                    formatter,
+                    "invalid card size: expected {expected} bytes, got {actual}"
+                )
+            }
             Self::InvalidRegister { index } => write!(formatter, "invalid CPU register r{index}"),
             Self::InvalidControlRegister { index } => {
                 write!(formatter, "invalid CPU control register cr{index}")

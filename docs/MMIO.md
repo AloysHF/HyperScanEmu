@@ -8,6 +8,7 @@ Implemented today:
 - SPG290 I²C master registers at `0x0813_0020` through `0x0813_0038`;
 - cycle-scheduled 8-bit, 16-bit and repeating I²C transfers, acknowledge bits and IRQ source 39;
 - both HyperScan controllers, including buttons, analog axes and sampled-byte checksums;
+- RFID output on GPIO bit 1 at `0x0820_0024` and response input at `0x0820_0068`;
 - six timer register blocks at `0x0816_0000` through `0x0816_5fff`;
 - timer gate/reload controls beginning at `0x0821_006c`;
 - shared timer clock selection at `0x0821_00e4`;
@@ -22,3 +23,7 @@ timer accuracy is provisional.
 The controller implementation models the firmware-visible protocol rather than
 the internal controller MCU and ADC. Writes to the controller bus complete but
 have no external side effect because no write command has yet been identified.
+
+RFID pulse widths are measured in emulated CPU cycles and converted to the
+13.56 MHz carrier clock. REQA, WUPA, RID, READ, RALL, WRITE-E and WRITE-NE are
+implemented with framing, odd parity and protocol CRC responses.

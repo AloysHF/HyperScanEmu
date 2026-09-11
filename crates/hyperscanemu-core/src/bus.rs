@@ -1,4 +1,4 @@
-use crate::{EmulatorError, Firmware, InputState, Spg290Devices};
+use crate::{CardImage, EmulatorError, Firmware, InputState, Spg290Devices};
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
 pub const DRAM_SIZE: usize = 0x0100_0000;
@@ -140,6 +140,14 @@ impl Bus {
 
     pub fn set_input(&mut self, input: InputState) {
         self.devices.set_input(input);
+    }
+
+    pub fn insert_card(&mut self, card: CardImage) -> Option<CardImage> {
+        self.devices.insert_card(card)
+    }
+
+    pub fn eject_card(&mut self) -> Option<CardImage> {
+        self.devices.eject_card()
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
