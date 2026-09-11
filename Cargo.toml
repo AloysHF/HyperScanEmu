@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hyperscanemu-core",
+    "crates/hyperscanemu",
+    "crates/hyperscanemu-libretro",
+]
+
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "An evidence-driven Mattel HyperScan emulator"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
