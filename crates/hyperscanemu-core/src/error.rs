@@ -11,6 +11,11 @@ pub enum EmulatorError {
     BlankFirmware {
         component: &'static str,
     },
+    MemoryFault {
+        access: &'static str,
+        address: u32,
+        width: u8,
+    },
     ExecutionNotImplemented,
 }
 
@@ -28,6 +33,14 @@ impl Display for EmulatorError {
             Self::BlankFirmware { component } => {
                 write!(formatter, "{component} is a uniform blank dump")
             }
+            Self::MemoryFault {
+                access,
+                address,
+                width,
+            } => write!(
+                formatter,
+                "invalid {access} of {width} byte(s) at 0x{address:08x}"
+            ),
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")
             }
