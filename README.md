@@ -8,7 +8,7 @@ yet.
 
 - Strategy: `lle`
 - Required firmware: 32 KiB SPG290 internal ROM and 1 MiB HyperScan BIOS
-- Planned game media: raw ISO/BIN/CUE images, with strict format validation
+- Game media: single-track CUE + raw `MODE1/2352` BIN with an ISO/UDF bridge
 - Display geometry: 640×480 output with hardware-controlled lower-resolution modes
 
 These values are hypotheses until supported by evidence in `tmp/PROJECT-STATUS.md`.
@@ -43,5 +43,11 @@ cargo run -p hyperscanemu -- <internal-rom.bin> <bios.bin>
 
 Firmware and game media are not included. Obtain and dump them legally from
 hardware and media you own.
+
+Validate a raw disc track without firmware:
+
+```bash
+cargo run -p hyperscanemu -- inspect-disc <track.bin>
+```
 
 Do not commit or distribute copyrighted ROMs, firmware, games, extracted assets, logs, or local research material.

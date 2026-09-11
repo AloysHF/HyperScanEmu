@@ -16,6 +16,15 @@ pub enum EmulatorError {
         address: u32,
         width: u8,
     },
+    InvalidDisc(&'static str),
+    InvalidDiscSector {
+        lba: u32,
+        reason: &'static str,
+    },
+    DiscSectorOutOfRange {
+        lba: u32,
+        sector_count: u32,
+    },
     ExecutionNotImplemented,
 }
 
@@ -40,6 +49,14 @@ impl Display for EmulatorError {
             } => write!(
                 formatter,
                 "invalid {access} of {width} byte(s) at 0x{address:08x}"
+            ),
+            Self::InvalidDisc(reason) => write!(formatter, "invalid disc image: {reason}"),
+            Self::InvalidDiscSector { lba, reason } => {
+                write!(formatter, "invalid disc sector at LBA {lba}: {reason}")
+            }
+            Self::DiscSectorOutOfRange { lba, sector_count } => write!(
+                formatter,
+                "disc sector LBA {lba} is outside the {sector_count}-sector image"
             ),
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")
