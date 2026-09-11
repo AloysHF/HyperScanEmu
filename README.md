@@ -51,4 +51,13 @@ Validate a raw disc track without firmware:
 cargo run -p hyperscanemu -- inspect-disc <track.bin>
 ```
 
+Run a deterministic number of complete frames with validated media:
+
+```bash
+cargo run -p hyperscanemu -- run <internal-rom.bin> <bios.bin> <track.bin> [frames]
+```
+
+See `docs/FRONTENDS.md` for libretro firmware placement and current frontend
+limitations.
+
 Do not commit or distribute copyrighted ROMs, firmware, games, extracted assets, logs, or local research material.
