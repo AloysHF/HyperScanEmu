@@ -31,9 +31,9 @@ cargo test --workspace
 cargo build --workspace --release
 ```
 
-The loader already rejects truncated and uniform blank firmware dumps. The core
-still returns `ExecutionNotImplemented` until the first S+Core execution slice is
-connected to the checked memory bus.
+The core includes a checked memory bus, an initial S+Core interpreter, timers and
+the firmware-visible dual-controller I²C protocol. Frame rendering remains
+`ExecutionNotImplemented` until the display pipeline is connected.
 
 Run a bounded, deterministic firmware trace with:
 

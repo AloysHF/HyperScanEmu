@@ -50,6 +50,7 @@ impl Emulator {
 
     pub fn set_input(&mut self, input: InputState) {
         self.input = input;
+        self.bus.set_input(input);
     }
 
     pub fn attach_disc(&mut self, disc: DiscImage) {
@@ -146,10 +147,14 @@ mod tests {
     fn reset_restores_frontend_visible_state() {
         let mut emulator = Emulator::new(test_firmware());
         emulator.set_input(InputState {
-            buttons: 1,
-            pointer_x: 10,
-            pointer_y: 20,
-            pointer_pressed: true,
+            controllers: [
+                crate::ControllerState {
+                    buttons: 1,
+                    analog_x: 10,
+                    analog_y: 20,
+                },
+                crate::ControllerState::default(),
+            ],
         });
         emulator.reset();
 

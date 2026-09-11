@@ -1,9 +1,12 @@
-use crate::EmulatorError;
+use crate::{EmulatorError, InputState};
 
 pub const CPU_CLOCK_HZ: u64 = 108_000_000;
 pub const PERIPHERAL_CLOCK_HZ: u64 = 27_000_000;
 pub const TIMER_INTERRUPT_SOURCE: u8 = 56;
+pub const I2C_INTERRUPT_SOURCE: u8 = 39;
 
+const I2C_BASE: u32 = 0x0813_0000;
+const I2C_END: u32 = 0x0813_ffff;
 const TIMER_BASE: u32 = 0x0816_0000;
 const TIMER_BLOCK_SIZE: u32 = 0x1000;
 const TIMER_COUNT: usize = 6;
@@ -12,6 +15,7 @@ const TIMER_CLOCK_SELECT: u32 = 0x0821_00e4;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
+    i2c: I2cController,
     timers: [Timer; TIMER_COUNT],
     timer_clock_select: u32,
     pending_interrupts: u64,
@@ -26,6 +30,7 @@ impl Default for Spg290Devices {
 impl Spg290Devices {
     pub fn new() -> Self {
         Self {
+            i2c: I2cController::default(),
             timers: std::array::from_fn(|_| Timer::default()),
             timer_clock_select: 0,
             pending_interrupts: 0,
@@ -37,6 +42,9 @@ impl Spg290Devices {
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, EmulatorError> {
+        if (I2C_BASE..=I2C_END).contains(&address) {
+            return self.i2c.read(address - I2C_BASE);
+        }
         if let Some((timer, offset)) = timer_address(address) {
             return self.timers[timer]
                 .read(offset)
@@ -49,6 +57,13 @@ impl Spg290Devices {
     }
 
     pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
+        if (I2C_BASE..=I2C_END).contains(&address) {
+            self.i2c.write(address - I2C_BASE, value)?;
+            if !self.i2c.interrupt_pending() {
+                self.pending_interrupts &= !(1_u64 << I2C_INTERRUPT_SOURCE);
+            }
+            return Ok(());
+        }
         if let Some((timer, offset)) = timer_address(address) {
             self.timers[timer]
                 .write(offset, value)
@@ -71,6 +86,9 @@ impl Spg290Devices {
     }
 
     pub fn tick(&mut self, cpu_cycles: u64) -> Result<(), EmulatorError> {
+        if self.i2c.tick(cpu_cycles) {
+            self.pending_interrupts |= 1_u64 << I2C_INTERRUPT_SOURCE;
+        }
         for timer in &mut self.timers {
             if timer.tick(cpu_cycles)? {
                 self.pending_interrupts |= 1_u64 << TIMER_INTERRUPT_SOURCE;
@@ -83,6 +101,10 @@ impl Spg290Devices {
         std::mem::take(&mut self.pending_interrupts)
     }
 
+    pub fn set_input(&mut self, input: InputState) {
+        self.i2c.set_input(input);
+    }
+
     fn update_timer_clocks(&mut self) {
         let divider = u64::from((self.timer_clock_select & 0xff) + 1);
         for (index, timer) in self.timers.iter_mut().enumerate() {
@@ -93,6 +115,143 @@ impl Spg290Devices {
                 PERIPHERAL_CLOCK_HZ / divider
             };
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct I2cController {
+    config: u32,
+    irq_control: u32,
+    clock_conf: u32,
+    id: u32,
+    port_addr: u32,
+    write_data: u32,
+    read_data: u32,
+    remaining_cycles: Option<u64>,
+    repeat: bool,
+    input: InputState,
+    sampled: [[u8; 4]; 2],
+}
+
+impl I2cController {
+    fn read(&self, offset: u32) -> Result<u32, EmulatorError> {
+        match offset {
+            0x20 => Ok(self.config),
+            0x24 => Ok(self.irq_control),
+            0x28 => Ok(self.clock_conf),
+            0x2c => Ok(self.id),
+            0x30 => Ok(self.port_addr),
+            0x34 => Ok(self.write_data),
+            0x38 => Ok(self.read_data),
+            _ => Err(unknown_mmio("read", I2C_BASE + offset)),
+        }
+    }
+
+    fn write(&mut self, offset: u32, value: u32) -> Result<(), EmulatorError> {
+        match offset {
+            0x20 => {
+                self.config = value;
+                self.schedule_transfer();
+            }
+            0x24 => {
+                self.irq_control = value;
+                if value & 1 != 0 {
+                    self.irq_control &= !1;
+                }
+            }
+            0x28 => self.clock_conf = value,
+            0x2c => self.id = value,
+            0x30 => self.port_addr = value,
+            0x34 => self.write_data = value,
+            0x38 => self.read_data = value,
+            _ => return Err(unknown_mmio("write", I2C_BASE + offset)),
+        }
+        Ok(())
+    }
+
+    fn schedule_transfer(&mut self) {
+        let clocks = if self.config & 1 != 0 {
+            self.repeat = false;
+            Some(38)
+        } else if self.config & 2 != 0 {
+            self.repeat = false;
+            Some(47)
+        } else if self.config & 4 != 0 {
+            self.repeat = true;
+            Some(38)
+        } else {
+            self.repeat = false;
+            None
+        };
+
+        self.remaining_cycles = clocks.map(|clocks| self.cycles_for_clocks(clocks));
+        if self.config & 0x100 != 0 && clocks.is_none() {
+            self.remaining_cycles = None;
+        }
+    }
+
+    fn cycles_for_clocks(&self, clocks: u64) -> u64 {
+        let divider = u64::from((self.clock_conf & 0x3ff) + 1);
+        clocks * 16 * divider
+    }
+
+    fn tick(&mut self, mut cpu_cycles: u64) -> bool {
+        let mut raised = false;
+        while let Some(remaining) = self.remaining_cycles {
+            if cpu_cycles < remaining {
+                self.remaining_cycles = Some(remaining - cpu_cycles);
+                break;
+            }
+
+            cpu_cycles -= remaining;
+            raised |= self.complete_transfer();
+            self.remaining_cycles = if self.repeat {
+                Some(self.cycles_for_clocks(38))
+            } else {
+                None
+            };
+        }
+        raised
+    }
+
+    fn complete_transfer(&mut self) -> bool {
+        if self.config & 0x40 != 0 {
+            self.read_data = u32::from(self.read_controller());
+        }
+        self.config |= (self.config & 7) << 3;
+        if self.irq_control & 2 != 0 {
+            self.irq_control |= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn read_controller(&mut self) -> u16 {
+        let port = ((self.port_addr >> 4) & 0x0f) as usize;
+        let address = (self.port_addr & 0x0f) as usize;
+        if port >= self.input.controllers.len() {
+            return 0;
+        }
+
+        if address < 4 {
+            let value = self.input.controllers[port].packet()[address];
+            self.sampled[port][address] = value;
+            u16::from(value)
+        } else {
+            let sum = self.sampled[port]
+                .iter()
+                .fold(0_u16, |sum, value| sum.wrapping_add(u16::from(*value)));
+            (sum << 2) | port as u16
+        }
+    }
+
+    fn set_input(&mut self, input: InputState) {
+        self.input = input;
+    }
+
+    fn interrupt_pending(&self) -> bool {
+        self.irq_control & 1 != 0
     }
 }
 
@@ -224,6 +383,76 @@ fn unknown_mmio(access: &'static str, address: u32) -> EmulatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ControllerButton, ControllerState};
+
+    fn finish_i2c_read(devices: &mut Spg290Devices, port_address: u32) -> u32 {
+        devices.write_u32(I2C_BASE + 0x30, port_address).unwrap();
+        devices.write_u32(I2C_BASE + 0x20, 0x41).unwrap();
+        devices.tick(608).unwrap();
+        devices.read_u32(I2C_BASE + 0x38).unwrap()
+    }
+
+    #[test]
+    fn i2c_reads_both_controller_packets_and_checksums() {
+        let mut first = ControllerState::default();
+        first.set_button(ControllerButton::Start, true);
+        first.set_button(ControllerButton::Red, true);
+        first.analog_x = 0x11;
+        first.analog_y = 0x22;
+        let mut second = ControllerState::default();
+        second.set_button(ControllerButton::Green, true);
+        second.analog_x = 0x33;
+        second.analog_y = 0x44;
+
+        let mut devices = Spg290Devices::new();
+        devices.set_input(InputState {
+            controllers: [first, second],
+        });
+
+        assert_eq!(finish_i2c_read(&mut devices, 0x00), 0x02);
+        assert_eq!(finish_i2c_read(&mut devices, 0x01), 0x40);
+        assert_eq!(finish_i2c_read(&mut devices, 0x02), 0x22);
+        assert_eq!(finish_i2c_read(&mut devices, 0x03), 0x11);
+        assert_eq!(finish_i2c_read(&mut devices, 0x04), 0x1d4);
+
+        assert_eq!(finish_i2c_read(&mut devices, 0x10), 0x00);
+        assert_eq!(finish_i2c_read(&mut devices, 0x11), 0x80);
+        assert_eq!(finish_i2c_read(&mut devices, 0x12), 0x44);
+        assert_eq!(finish_i2c_read(&mut devices, 0x13), 0x33);
+        assert_eq!(finish_i2c_read(&mut devices, 0x14), 0x3dd);
+    }
+
+    #[test]
+    fn i2c_completion_obeys_clock_and_sets_ack() {
+        let mut devices = Spg290Devices::new();
+        devices.write_u32(I2C_BASE + 0x30, 2).unwrap();
+        devices.write_u32(I2C_BASE + 0x20, 0x41).unwrap();
+
+        devices.tick(607).unwrap();
+        assert_eq!(devices.read_u32(I2C_BASE + 0x20).unwrap() & 8, 0);
+        devices.tick(1).unwrap();
+
+        assert_ne!(devices.read_u32(I2C_BASE + 0x20).unwrap() & 8, 0);
+        assert_eq!(devices.read_u32(I2C_BASE + 0x38).unwrap(), 0x7f);
+    }
+
+    #[test]
+    fn i2c_interrupt_can_be_acknowledged() {
+        let mut devices = Spg290Devices::new();
+        devices.write_u32(I2C_BASE + 0x24, 2).unwrap();
+        devices.write_u32(I2C_BASE + 0x20, 1).unwrap();
+        devices.tick(608).unwrap();
+
+        assert_eq!(
+            devices.take_pending_interrupts(),
+            1_u64 << I2C_INTERRUPT_SOURCE
+        );
+        assert_eq!(devices.read_u32(I2C_BASE + 0x24).unwrap(), 3);
+
+        devices.write_u32(I2C_BASE + 0x24, 3).unwrap();
+        assert_eq!(devices.read_u32(I2C_BASE + 0x24).unwrap(), 2);
+        assert_eq!(devices.take_pending_interrupts(), 0);
+    }
 
     #[test]
     fn timer_overflow_reloads_and_raises_shared_interrupt() {

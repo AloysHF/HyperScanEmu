@@ -1,4 +1,4 @@
-use crate::{EmulatorError, Firmware, Spg290Devices};
+use crate::{EmulatorError, Firmware, InputState, Spg290Devices};
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
 pub const DRAM_SIZE: usize = 0x0100_0000;
@@ -136,6 +136,10 @@ impl Bus {
 
     pub fn take_pending_interrupts(&mut self) -> u64 {
         self.devices.take_pending_interrupts()
+    }
+
+    pub fn set_input(&mut self, input: InputState) {
+        self.devices.set_input(input);
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
