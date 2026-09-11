@@ -7,6 +7,7 @@ Implemented today:
 
 - PPU register/RAM windows at `0x0801_0000`, with cycle-driven VBlank status and IRQ source 53;
 - TVE mode/fade control, triple framebuffer addresses, buffer selection and MIU ready status;
+- interrupt pending, software interrupt and priority registers at `0x080a_0000` through `0x080a_001c`;
 - CD servo registers at `0x0806_0004` through `0x0806_006c`;
 - deterministic 1×/2×/4×/8× sector scheduling, raw-sector ring-buffer DMA and IRQ source 60;
 - firmware-visible CD DSP commands, program memory, disc identification and single-track Q subchannel;
@@ -41,3 +42,8 @@ The display path schedules NTSC/PAL frames from the 27 MHz pixel clock and
 converts the selected RGB565 direct framebuffer to XRGB8888. Progressive output
 duplicates line pairs as observed. PPU palette and sprite RAM are addressable,
 but text layers and sprites are not composed yet.
+
+The interrupt controller exposes peripheral level state using the documented
+vector-to-pending-bit mapping. Priority fields are retained and readable; the CPU
+still uses provisional highest-vector arbitration until priority conformance
+tests are available.

@@ -23,6 +23,12 @@ const TIMER_GATE_BASE: u32 = 0x0821_006c;
 const TIMER_CLOCK_SELECT: u32 = 0x0821_00e4;
 const GPIO_OUTPUT: u32 = 0x0820_0024;
 const GPIO_INPUT: u32 = 0x0820_0068;
+const INTERRUPT_PENDING: u32 = 0x080a_0000;
+const INTERRUPT_PENDING_HIGH: u32 = 0x080a_0004;
+const INTERRUPT_PRIORITY_MASTER: u32 = 0x080a_0008;
+const GPU_SOFTWARE_INTERRUPT: u32 = 0x080a_000c;
+const INTERRUPT_PRIORITY_START: u32 = 0x080a_0010;
+const INTERRUPT_PRIORITY_END: u32 = 0x080a_001c;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
@@ -31,6 +37,9 @@ pub struct Spg290Devices {
     i2c: I2cController,
     card: CardDevice,
     gpio_output: u32,
+    interrupt_priority_master: u32,
+    interrupt_priorities: [u32; 4],
+    gpu_software_interrupt: bool,
     timers: [Timer; TIMER_COUNT],
     timer_clock_select: u32,
     pending_interrupts: u64,
@@ -50,6 +59,9 @@ impl Spg290Devices {
             i2c: I2cController::default(),
             card: CardDevice::default(),
             gpio_output: 0,
+            interrupt_priority_master: 0,
+            interrupt_priorities: [0; 4],
+            gpu_software_interrupt: false,
             timers: std::array::from_fn(|_| Timer::default()),
             timer_clock_select: 0,
             pending_interrupts: 0,
@@ -84,6 +96,23 @@ impl Spg290Devices {
         }
         if address == GPIO_INPUT {
             return Ok(u32::from(self.card.read_line()));
+        }
+        if address == INTERRUPT_PENDING {
+            return Ok(self.interrupt_pending_register());
+        }
+        if address == INTERRUPT_PENDING_HIGH {
+            return Ok((self.active_interrupts() >> 24) as u32 & 0xff);
+        }
+        if address == INTERRUPT_PRIORITY_MASTER {
+            return Ok(self.interrupt_priority_master);
+        }
+        if address == GPU_SOFTWARE_INTERRUPT {
+            return Ok(u32::from(self.gpu_software_interrupt));
+        }
+        if (INTERRUPT_PRIORITY_START..=INTERRUPT_PRIORITY_END).contains(&address) {
+            return Ok(
+                self.interrupt_priorities[((address - INTERRUPT_PRIORITY_START) / 4) as usize]
+            );
         }
         if let Some((timer, offset)) = timer_address(address) {
             return self.timers[timer]
@@ -122,6 +151,28 @@ impl Spg290Devices {
         if address == GPIO_OUTPUT {
             self.gpio_output = value;
             self.card.write_line(value & 2 != 0);
+            return Ok(());
+        }
+        if address == INTERRUPT_PRIORITY_MASTER {
+            self.interrupt_priority_master = value & 0xff;
+            return Ok(());
+        }
+        if address == GPU_SOFTWARE_INTERRUPT {
+            if value & (1 << 8) != 0 {
+                self.gpu_software_interrupt = false;
+                if !self.video.interrupt_pending() {
+                    self.pending_interrupts &= !(1_u64 << PPU_INTERRUPT_SOURCE);
+                }
+            }
+            if value & 1 != 0 {
+                self.gpu_software_interrupt = true;
+                self.pending_interrupts |= 1_u64 << PPU_INTERRUPT_SOURCE;
+            }
+            return Ok(());
+        }
+        if (INTERRUPT_PRIORITY_START..=INTERRUPT_PRIORITY_END).contains(&address) {
+            self.interrupt_priorities[((address - INTERRUPT_PRIORITY_START) / 4) as usize] =
+                value & 0x00ff_ffff;
             return Ok(());
         }
         if let Some((timer, offset)) = timer_address(address) {
@@ -201,6 +252,34 @@ impl Spg290Devices {
 
     fn cd_disc_sectors(&self) -> Option<u32> {
         self.cd.disc_sector_count()
+    }
+
+    fn active_interrupts(&self) -> u64 {
+        let mut sources = 0;
+        if self.i2c.interrupt_pending() {
+            sources |= 1_u64 << I2C_INTERRUPT_SOURCE;
+        }
+        if self.timers.iter().any(Timer::interrupt_pending) {
+            sources |= 1_u64 << TIMER_INTERRUPT_SOURCE;
+        }
+        if self.cd.frame_found() {
+            sources |= 1_u64 << CD_INTERRUPT_SOURCE;
+        }
+        if self.video.interrupt_pending() || self.gpu_software_interrupt {
+            sources |= 1_u64 << PPU_INTERRUPT_SOURCE;
+        }
+        sources
+    }
+
+    fn interrupt_pending_register(&self) -> u32 {
+        let sources = self.active_interrupts();
+        (32..64).fold(0_u32, |pending, vector| {
+            if sources & (1_u64 << vector) != 0 {
+                pending | (1 << (63 - vector))
+            } else {
+                pending
+            }
+        })
     }
 
     fn update_timer_clocks(&mut self) {
@@ -550,6 +629,41 @@ mod tests {
         devices.write_u32(I2C_BASE + 0x24, 3).unwrap();
         assert_eq!(devices.read_u32(I2C_BASE + 0x24).unwrap(), 2);
         assert_eq!(devices.take_pending_interrupts(), 0);
+    }
+
+    #[test]
+    fn interrupt_controller_reports_vector_mapped_pending_bits() {
+        let mut devices = Spg290Devices::new();
+        devices.write_u32(I2C_BASE + 0x24, 2).unwrap();
+        devices.write_u32(I2C_BASE + 0x20, 1).unwrap();
+        devices.tick(608).unwrap();
+
+        assert_eq!(
+            devices.read_u32(INTERRUPT_PENDING).unwrap(),
+            1 << (63 - I2C_INTERRUPT_SOURCE)
+        );
+        devices.write_u32(GPU_SOFTWARE_INTERRUPT, 1).unwrap();
+        assert_ne!(
+            devices.read_u32(INTERRUPT_PENDING).unwrap() & (1 << (63 - PPU_INTERRUPT_SOURCE)),
+            0
+        );
+        devices.write_u32(GPU_SOFTWARE_INTERRUPT, 1 << 8).unwrap();
+        assert_eq!(devices.read_u32(GPU_SOFTWARE_INTERRUPT).unwrap(), 0);
+    }
+
+    #[test]
+    fn interrupt_priority_configuration_round_trips() {
+        let mut devices = Spg290Devices::new();
+        devices.write_u32(INTERRUPT_PRIORITY_MASTER, 0x1ff).unwrap();
+        devices
+            .write_u32(INTERRUPT_PRIORITY_START + 8, 0xffff_ffff)
+            .unwrap();
+
+        assert_eq!(devices.read_u32(INTERRUPT_PRIORITY_MASTER).unwrap(), 0xff);
+        assert_eq!(
+            devices.read_u32(INTERRUPT_PRIORITY_START + 8).unwrap(),
+            0x00ff_ffff
+        );
     }
 
     #[test]
