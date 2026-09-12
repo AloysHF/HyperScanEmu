@@ -43,6 +43,10 @@ const SYSTEM_CONFIG_REGISTER_COUNT: usize =
 const MIU_REGISTER_START: u32 = 0x0807_000c;
 const MIU_REGISTER_END: u32 = 0x0807_01fc;
 const MIU_REGISTER_COUNT: usize = ((MIU_REGISTER_END - MIU_REGISTER_START) / 4 + 1) as usize;
+const MIU_EXTENDED_START: u32 = 0x0823_0000;
+const MIU_EXTENDED_END: u32 = 0x0823_0064;
+const MIU_EXTENDED_REGISTER_COUNT: usize =
+    ((MIU_EXTENDED_END - MIU_EXTENDED_START) / 4 + 1) as usize;
 const BUFFER_CONTROL_START: u32 = 0x0809_0000;
 const BUFFER_CONTROL_END: u32 = 0x0809_00fc;
 const BUFFER_CONTROL_REGISTER_COUNT: usize =
@@ -68,6 +72,7 @@ pub struct Spg290Devices {
     gpio_output: u32,
     system_config_registers: [u32; SYSTEM_CONFIG_REGISTER_COUNT],
     miu_registers: [u32; MIU_REGISTER_COUNT],
+    miu_extended_registers: [u32; MIU_EXTENDED_REGISTER_COUNT],
     buffer_control_registers: [u32; BUFFER_CONTROL_REGISTER_COUNT],
     interrupt_priority_master: u32,
     interrupt_priorities: [u32; 4],
@@ -100,6 +105,7 @@ impl Spg290Devices {
             gpio_output: 0,
             system_config_registers,
             miu_registers: [0; MIU_REGISTER_COUNT],
+            miu_extended_registers: [0; MIU_EXTENDED_REGISTER_COUNT],
             buffer_control_registers: [0; BUFFER_CONTROL_REGISTER_COUNT],
             interrupt_priority_master: 0,
             interrupt_priorities: [0; 4],
@@ -189,6 +195,9 @@ impl Spg290Devices {
         }
         if let Some(index) = miu_register_index(address) {
             return Ok(self.miu_registers[index]);
+        }
+        if let Some(index) = miu_extended_register_index(address) {
+            return Ok(self.miu_extended_registers[index]);
         }
         if let Some(index) = buffer_control_register_index(address) {
             return Ok(self.buffer_control_registers[index]);
@@ -296,6 +305,10 @@ impl Spg290Devices {
         }
         if let Some(index) = miu_register_index(address) {
             self.miu_registers[index] = value;
+            return Ok(());
+        }
+        if let Some(index) = miu_extended_register_index(address) {
+            self.miu_extended_registers[index] = value;
             return Ok(());
         }
         if let Some(index) = buffer_control_register_index(address) {
@@ -730,6 +743,13 @@ fn miu_register_index(address: u32) -> Option<usize> {
     Some(((address - MIU_REGISTER_START) / 4) as usize)
 }
 
+fn miu_extended_register_index(address: u32) -> Option<usize> {
+    if !(MIU_EXTENDED_START..=MIU_EXTENDED_END).contains(&address) || address & 3 != 0 {
+        return None;
+    }
+    Some(((address - MIU_EXTENDED_START) / 4) as usize)
+}
+
 fn buffer_control_register_index(address: u32) -> Option<usize> {
     if !(BUFFER_CONTROL_START..=BUFFER_CONTROL_END).contains(&address) || address & 3 != 0 {
         return None;
@@ -940,5 +960,24 @@ mod tests {
         devices.write_u32(C3_STUB_START + 0x10, 1).unwrap();
 
         assert_eq!(devices.read_u32(C3_STUB_START + 0x10), Ok(0));
+    }
+
+    #[test]
+    fn extended_miu_registers_retain_configuration() {
+        let mut devices = Spg290Devices::new();
+
+        devices
+            .write_u32(MIU_EXTENDED_START + 0x44, 0x1234_5678)
+            .unwrap();
+        devices
+            .write_u32(MIU_EXTENDED_START + 0x64, 0x9abc_def0)
+            .unwrap();
+
+        assert_eq!(devices.read_u32(MIU_EXTENDED_START + 0x44), Ok(0x1234_5678));
+        assert_eq!(devices.read_u32(MIU_EXTENDED_START + 0x64), Ok(0x9abc_def0));
+        assert!(matches!(
+            devices.write_u32(MIU_EXTENDED_END + 4, 1),
+            Err(EmulatorError::UnknownMmio { .. })
+        ));
     }
 }

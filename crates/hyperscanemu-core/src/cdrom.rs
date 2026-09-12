@@ -4,6 +4,9 @@ use crate::EmulatorError;
 
 const LEAD_IN_SECTORS: u32 = 7_500;
 const LEAD_OUT_SECTORS: u32 = 6_750;
+const FRAMES_PER_100_MINUTES: u32 = 100 * 60 * 75;
+const LEAD_IN_TOC_ENTRY_SECTORS: u32 = 3;
+const CD_DMA_TRAILER_SIZE: usize = 16;
 const COMMAND_TRACE_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +20,7 @@ pub struct CdCommandTrace {
     pub kind: CdCommandKind,
     pub address: u32,
     pub data: u32,
+    pub sector: u32,
     pub pc: u32,
     pub link: u32,
 }
@@ -114,7 +118,7 @@ impl CdServo {
     pub(crate) fn set_disc(&mut self, sector_count: Option<u32>) {
         self.disc_sectors = sector_count;
         self.total_sectors = sector_count
-            .map(|count| LEAD_IN_SECTORS + 150 + count + LEAD_OUT_SECTORS)
+            .map(|count| LEAD_IN_SECTORS + count + LEAD_OUT_SECTORS)
             .unwrap_or(0);
         self.current_sector = 0;
         self.pending_dma = None;
@@ -164,7 +168,7 @@ impl CdServo {
                 self.seek_lba = bcd_to_binary(self.seek_minute) * 60 * 75
                     + bcd_to_binary(self.seek_second) * 75
                     + bcd_to_binary(self.seek_frame);
-                self.current_sector = LEAD_IN_SECTORS + self.seek_lba;
+                self.current_sector = LEAD_IN_SECTORS + self.seek_lba.saturating_sub(150);
                 self.phase = 0;
             }
             0x48 => self.seek_minute = value as u8,
@@ -232,15 +236,17 @@ impl CdServo {
     }
 
     fn advance_sector(&mut self) -> Result<(), EmulatorError> {
-        if self.control1 & 4 == 0 && self.current_sector == LEAD_IN_SECTORS + self.seek_lba {
+        if self.control1 & 4 == 0
+            && self.current_sector == LEAD_IN_SECTORS + self.seek_lba.saturating_sub(150)
+        {
             if self.control0 & (1 << 15) != 0 {
                 return Err(EmulatorError::UnsupportedCdAudio);
             }
             let size = self.sector_size as usize;
-            if size > crate::RAW_SECTOR_SIZE {
+            if size > crate::RAW_SECTOR_SIZE + CD_DMA_TRAILER_SIZE {
                 return Err(EmulatorError::InvalidCdSectorSize {
                     size,
-                    maximum: crate::RAW_SECTOR_SIZE,
+                    maximum: crate::RAW_SECTOR_SIZE + CD_DMA_TRAILER_SIZE,
                 });
             }
             if self.seek_lba >= 150 {
@@ -255,9 +261,7 @@ impl CdServo {
             self.seek_lba = self.seek_lba.saturating_add(1);
         }
 
-        if self.current_sector < LEAD_IN_SECTORS + self.seek_lba
-            && self.current_sector < self.total_sectors
-        {
+        if self.current_sector < self.total_sectors {
             self.current_sector += 1;
         }
         Ok(())
@@ -348,46 +352,47 @@ impl CdServo {
             return self.lead_in_q_subchannel(index);
         }
         let relative = self.current_sector.saturating_sub(LEAD_IN_SECTORS);
-        let (track, track_index, track_frame) = if relative < 150 {
-            (1, 0, relative)
-        } else {
-            (1, 1, relative - 150)
-        };
+        let absolute = relative + 150;
         let values = [
             0x41,
-            binary_to_bcd(track),
-            track_index,
-            binary_to_bcd(track_frame / (60 * 75)),
-            binary_to_bcd((track_frame / 75) % 60),
-            binary_to_bcd(track_frame % 75),
-            0,
+            binary_to_bcd(1),
+            1,
             binary_to_bcd(relative / (60 * 75)),
             binary_to_bcd((relative / 75) % 60),
             binary_to_bcd(relative % 75),
+            0,
+            binary_to_bcd(absolute / (60 * 75)),
+            binary_to_bcd((absolute / 75) % 60),
+            binary_to_bcd(absolute % 75),
         ];
         values.get(index).copied().unwrap_or(0)
     }
 
     fn lead_in_q_subchannel(&self, index: usize) -> u8 {
-        let entry = self.current_sector % 4;
+        let entry = (self.current_sector / LEAD_IN_TOC_ENTRY_SECTORS) % 4;
         let point = [0xa0, 0xa1, 0xa2, 0x01][entry as usize];
         let program_end = self.disc_sectors.unwrap_or(0).saturating_add(150);
-        let absolute = match entry {
-            0 | 1 => 1 << 16,
-            2 => program_end,
-            _ => 150,
+        let lead_in_position = FRAMES_PER_100_MINUTES - (LEAD_IN_SECTORS - self.current_sector);
+        let descriptor = match entry {
+            0 | 1 => [0x01, 0x00, 0x00],
+            2 => [
+                binary_to_bcd(program_end / (60 * 75)),
+                binary_to_bcd((program_end / 75) % 60),
+                binary_to_bcd(program_end % 75),
+            ],
+            _ => [0x00, 0x02, 0x00],
         };
         let values = [
             0x41,
             0,
             point,
-            binary_to_bcd(self.current_sector / (60 * 75)),
-            binary_to_bcd((self.current_sector / 75) % 60),
-            binary_to_bcd(self.current_sector % 75),
+            binary_to_bcd(lead_in_position / (60 * 75)),
+            binary_to_bcd((lead_in_position / 75) % 60),
+            binary_to_bcd(lead_in_position % 75),
             0,
-            binary_to_bcd(absolute / (60 * 75)),
-            binary_to_bcd((absolute / 75) % 60),
-            binary_to_bcd(absolute % 75),
+            descriptor[0],
+            descriptor[1],
+            descriptor[2],
         ];
         values.get(index).copied().unwrap_or(0)
     }
@@ -397,10 +402,17 @@ impl CdServo {
             kind,
             address: self.address,
             data: self.data,
+            sector: self.current_sector,
             pc: self.execution_pc,
             link: self.execution_link,
         };
-        if self.command_trace.back() == Some(&event) {
+        if self.command_trace.back().is_some_and(|previous| {
+            previous.kind == event.kind
+                && previous.address == event.address
+                && previous.data == event.data
+                && previous.pc == event.pc
+                && previous.link == event.link
+        }) {
             return;
         }
         if self.command_trace.len() == COMMAND_TRACE_CAPACITY {
@@ -484,6 +496,7 @@ mod tests {
                     kind: CdCommandKind::Read,
                     address: 0x079,
                     data: 0xe3,
+                    sector: 0,
                     pc: 0,
                     link: 0,
                 },
@@ -491,6 +504,7 @@ mod tests {
                     kind: CdCommandKind::Write,
                     address: 0x020,
                     data: 2,
+                    sector: 0,
                     pc: 0,
                     link: 0,
                 },
@@ -503,7 +517,7 @@ mod tests {
         let mut servo = CdServo::default();
         servo.set_disc(Some(20_000));
 
-        let points = (0..4)
+        let points = (0..12)
             .map(|_| {
                 let point = read_dsp(&mut servo, 0x342);
                 servo.current_sector += 1;
@@ -511,11 +525,48 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(points, [0xa0, 0xa1, 0xa2, 0x01]);
-        servo.current_sector = 2;
+        assert_eq!(points[..3], [0xa0; 3]);
+        assert_eq!(points[3..6], [0xa1; 3]);
+        assert_eq!(points[6..9], [0xa2; 3]);
+        assert_eq!(points[9..12], [0x01; 3]);
+        servo.current_sector = 0;
+        assert_eq!(read_dsp(&mut servo, 0x347), 0x01);
+        assert_eq!(read_dsp(&mut servo, 0x348), 0x00);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x00);
+        servo.current_sector = 3;
+        assert_eq!(read_dsp(&mut servo, 0x347), 0x01);
+        assert_eq!(read_dsp(&mut servo, 0x348), 0x00);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x00);
+        servo.current_sector = 6;
         assert_eq!(read_dsp(&mut servo, 0x347), 0x04);
         assert_eq!(read_dsp(&mut servo, 0x348), 0x28);
         assert_eq!(read_dsp(&mut servo, 0x349), 0x50);
+        servo.current_sector = 9;
+        assert_eq!(read_dsp(&mut servo, 0x347), 0x00);
+        assert_eq!(read_dsp(&mut servo, 0x348), 0x02);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x00);
+
+        servo.current_sector = LEAD_IN_SECTORS - 82;
+        assert_eq!(read_dsp(&mut servo, 0x343), 0x99);
+        assert_eq!(read_dsp(&mut servo, 0x344), 0x58);
+        assert_eq!(read_dsp(&mut servo, 0x345), 0x68);
+    }
+
+    #[test]
+    fn first_program_sector_is_track_one_index_one_at_two_seconds() {
+        let mut servo = CdServo::default();
+        servo.set_disc(Some(20_000));
+        servo.current_sector = LEAD_IN_SECTORS;
+
+        assert_eq!(read_dsp(&mut servo, 0x341), 0x01);
+        assert_eq!(read_dsp(&mut servo, 0x342), 0x01);
+        assert_eq!(read_dsp(&mut servo, 0x347), 0x00);
+        assert_eq!(read_dsp(&mut servo, 0x348), 0x02);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x00);
+
+        servo.tick(crate::CPU_CLOCK_HZ / 75).unwrap();
+        assert_eq!(servo.current_sector, LEAD_IN_SECTORS + 1);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x01);
     }
 
     #[test]

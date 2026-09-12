@@ -205,8 +205,9 @@ impl Bus {
         while let Some(request) = self.devices.take_cd_dma_request() {
             let sector = disc.read_raw_sector(request.lba)?;
             let mut pointer = request.buffer_pointer;
-            for byte in &sector[..request.sector_size] {
-                self.write_u8(pointer, *byte)?;
+            for index in 0..request.sector_size {
+                let byte = sector.get(index).copied().unwrap_or(0);
+                self.write_u8(pointer, byte)?;
                 pointer = pointer.wrapping_add(1);
                 if pointer > request.buffer_end {
                     pointer = request.buffer_start;
@@ -727,6 +728,29 @@ mod tests {
         assert_eq!(bus.read_u32(0x100).unwrap(), 0xffff_ff00);
         assert_eq!(bus.read_u32(0x10c).unwrap(), 0x0100_0200);
         assert_eq!(bus.read_u32(0x0806_0068).unwrap(), 0x100);
+        assert_eq!(bus.take_pending_interrupts(), 1_u64 << CD_INTERRUPT_SOURCE);
+    }
+
+    #[test]
+    fn cd_servo_dma_pads_sixteen_byte_trailer() {
+        let disc = test_disc();
+        let mut bus = test_bus();
+        bus.set_disc(Some(&disc));
+        bus.write_u32(0x0806_0048, 0).unwrap();
+        bus.write_u32(0x0806_004c, 2).unwrap();
+        bus.write_u32(0x0806_0050, 0).unwrap();
+        bus.write_u32(0x0806_0060, 0x100).unwrap();
+        bus.write_u32(0x0806_0064, 0xa3f).unwrap();
+        bus.write_u32(0x0806_0068, 0x100).unwrap();
+        bus.write_u32(0x0806_006c, (RAW_SECTOR_SIZE + 16) as u32)
+            .unwrap();
+        bus.write_u32(0x0806_0044, 0).unwrap();
+
+        bus.tick(CPU_CLOCK_HZ / 75).unwrap();
+        bus.service_cd(&disc).unwrap();
+
+        assert_eq!(bus.read_u32(0x100).unwrap(), 0xffff_ff00);
+        assert_eq!(bus.read_u32(0xa30).unwrap(), 0);
         assert_eq!(bus.take_pending_interrupts(), 1_u64 << CD_INTERRUPT_SOURCE);
     }
 
