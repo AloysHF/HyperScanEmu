@@ -22,7 +22,7 @@ const SPU_END: u32 = 0x0805_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
 const C3_STUB_START: u32 = 0x0824_0000;
-const C3_STUB_END: u32 = 0x0824_000f;
+const C3_STUB_END: u32 = 0x0824_ffff;
 const TIMER_BASE: u32 = 0x0816_0000;
 const TIMER_BLOCK_SIZE: u32 = 0x1000;
 const TIMER_COUNT: usize = 6;
@@ -931,5 +931,14 @@ mod tests {
             devices.tick(4),
             Err(EmulatorError::UnsupportedTimerMode { mode: 1 })
         );
+    }
+
+    #[test]
+    fn c3_ecc_window_accepts_firmware_probe_writes() {
+        let mut devices = Spg290Devices::new();
+
+        devices.write_u32(C3_STUB_START + 0x10, 1).unwrap();
+
+        assert_eq!(devices.read_u32(C3_STUB_START + 0x10), Ok(0));
     }
 }
