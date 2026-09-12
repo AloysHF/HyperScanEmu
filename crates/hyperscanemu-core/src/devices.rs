@@ -2,6 +2,7 @@ use crate::{
     audio::{AudioDmaRequest, DacFifo},
     card::CardDevice,
     cdrom::{CdDmaRequest, CdServo},
+    uart::Uart,
     video::{DirectFrameState, PpuRenderState, VideoController},
     CardImage, EmulatorError, InputState,
 };
@@ -16,35 +17,65 @@ pub const SPU_INTERRUPT_SOURCE: u8 = 63;
 
 const CD_BASE: u32 = 0x0806_0000;
 const CD_END: u32 = 0x0806_ffff;
+const SPU_BASE: u32 = 0x0805_0000;
+const SPU_END: u32 = 0x0805_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
+const C3_STUB_START: u32 = 0x0824_0000;
+const C3_STUB_END: u32 = 0x0824_000f;
 const TIMER_BASE: u32 = 0x0816_0000;
 const TIMER_BLOCK_SIZE: u32 = 0x1000;
 const TIMER_COUNT: usize = 6;
+const UART_BASE: u32 = 0x0815_0000;
+const UART_END: u32 = 0x0815_0010;
 const TIMER_GATE_BASE: u32 = 0x0821_006c;
 const TIMER_CLOCK_SELECT: u32 = 0x0821_00e4;
+const CLOCK_REGISTER_START: u32 = 0x0821_0000;
+const CLOCK_REGISTER_END: u32 = 0x0821_0114;
+const CLOCK_REGISTER_COUNT: usize = ((CLOCK_REGISTER_END - CLOCK_REGISTER_START) / 4 + 1) as usize;
 const GPIO_OUTPUT: u32 = 0x0820_0024;
 const GPIO_INPUT: u32 = 0x0820_0068;
+const SYSTEM_STRAP_STATUS: u32 = 0x0820_0058;
+const SYSTEM_CONFIG_START: u32 = 0x0820_0000;
+const SYSTEM_CONFIG_END: u32 = 0x0820_0114;
+const SYSTEM_CONFIG_REGISTER_COUNT: usize =
+    ((SYSTEM_CONFIG_END - SYSTEM_CONFIG_START) / 4 + 1) as usize;
+const MIU_REGISTER_START: u32 = 0x0807_000c;
+const MIU_REGISTER_END: u32 = 0x0807_01fc;
+const MIU_REGISTER_COUNT: usize = ((MIU_REGISTER_END - MIU_REGISTER_START) / 4 + 1) as usize;
+const BUFFER_CONTROL_START: u32 = 0x0809_0000;
+const BUFFER_CONTROL_END: u32 = 0x0809_00fc;
+const BUFFER_CONTROL_REGISTER_COUNT: usize =
+    ((BUFFER_CONTROL_END - BUFFER_CONTROL_START) / 4 + 1) as usize;
 const INTERRUPT_PENDING: u32 = 0x080a_0000;
 const INTERRUPT_PENDING_HIGH: u32 = 0x080a_0004;
 const INTERRUPT_PRIORITY_MASTER: u32 = 0x080a_0008;
 const GPU_SOFTWARE_INTERRUPT: u32 = 0x080a_000c;
 const INTERRUPT_PRIORITY_START: u32 = 0x080a_0010;
 const INTERRUPT_PRIORITY_END: u32 = 0x080a_001c;
+const INTERRUPT_MASK_START: u32 = 0x080a_0020;
+const INTERRUPT_MASK_END: u32 = 0x080a_0024;
 
 #[derive(Debug, Clone)]
 pub struct Spg290Devices {
     audio: DacFifo,
+    spu_registers: Box<[u32]>,
     cd: CdServo,
     video: VideoController,
     i2c: I2cController,
     card: CardDevice,
+    uart: Uart,
     gpio_output: u32,
+    system_config_registers: [u32; SYSTEM_CONFIG_REGISTER_COUNT],
+    miu_registers: [u32; MIU_REGISTER_COUNT],
+    buffer_control_registers: [u32; BUFFER_CONTROL_REGISTER_COUNT],
     interrupt_priority_master: u32,
     interrupt_priorities: [u32; 4],
+    interrupt_masks: [u32; 2],
     gpu_software_interrupt: bool,
     timers: [Timer; TIMER_COUNT],
     timer_clock_select: u32,
+    clock_registers: [u32; CLOCK_REGISTER_COUNT],
     pending_interrupts: u64,
 }
 
@@ -56,18 +87,27 @@ impl Default for Spg290Devices {
 
 impl Spg290Devices {
     pub fn new() -> Self {
+        let mut system_config_registers = [0; SYSTEM_CONFIG_REGISTER_COUNT];
+        system_config_registers[((SYSTEM_STRAP_STATUS - SYSTEM_CONFIG_START) / 4) as usize] = 3;
         Self {
             audio: DacFifo::default(),
+            spu_registers: vec![0; 0x1_0000 / 4].into_boxed_slice(),
             cd: CdServo::default(),
             video: VideoController::default(),
             i2c: I2cController::default(),
             card: CardDevice::default(),
+            uart: Uart::default(),
             gpio_output: 0,
+            system_config_registers,
+            miu_registers: [0; MIU_REGISTER_COUNT],
+            buffer_control_registers: [0; BUFFER_CONTROL_REGISTER_COUNT],
             interrupt_priority_master: 0,
             interrupt_priorities: [0; 4],
+            interrupt_masks: [0; 2],
             gpu_software_interrupt: false,
             timers: std::array::from_fn(|_| Timer::default()),
             timer_clock_select: 0,
+            clock_registers: [0; CLOCK_REGISTER_COUNT],
             pending_interrupts: 0,
         }
     }
@@ -86,6 +126,9 @@ impl Spg290Devices {
         if let Some(value) = self.audio.read(address) {
             return Ok(value);
         }
+        if (SPU_BASE..=SPU_END).contains(&address) && address & 3 == 0 {
+            return Ok(self.spu_registers[((address - SPU_BASE) / 4) as usize]);
+        }
         if let Some(value) = self.video.read(address) {
             return Ok(value);
         }
@@ -98,11 +141,23 @@ impl Spg290Devices {
         if (I2C_BASE..=I2C_END).contains(&address) {
             return self.i2c.read(address - I2C_BASE);
         }
+        if (C3_STUB_START..=C3_STUB_END).contains(&address) {
+            return Ok(0);
+        }
+        if (UART_BASE..=UART_END).contains(&address) {
+            return self
+                .uart
+                .read(address - UART_BASE)
+                .ok_or(unknown_mmio("read", address));
+        }
         if address == GPIO_OUTPUT {
             return Ok(self.gpio_output);
         }
         if address == GPIO_INPUT {
             return Ok(u32::from(self.card.read_line()));
+        }
+        if let Some(index) = system_config_register_index(address) {
+            return Ok(self.system_config_registers[index]);
         }
         if address == INTERRUPT_PENDING {
             return Ok(self.interrupt_pending_register());
@@ -121,6 +176,9 @@ impl Spg290Devices {
                 self.interrupt_priorities[((address - INTERRUPT_PRIORITY_START) / 4) as usize]
             );
         }
+        if (INTERRUPT_MASK_START..=INTERRUPT_MASK_END).contains(&address) {
+            return Ok(self.interrupt_masks[((address - INTERRUPT_MASK_START) / 4) as usize]);
+        }
         if let Some((timer, offset)) = timer_address(address) {
             return self.timers[timer]
                 .read(offset)
@@ -128,6 +186,15 @@ impl Spg290Devices {
         }
         if address == TIMER_CLOCK_SELECT {
             return Ok(self.timer_clock_select);
+        }
+        if let Some(index) = miu_register_index(address) {
+            return Ok(self.miu_registers[index]);
+        }
+        if let Some(index) = buffer_control_register_index(address) {
+            return Ok(self.buffer_control_registers[index]);
+        }
+        if let Some(index) = clock_register_index(address) {
+            return Ok(self.clock_registers[index]);
         }
         Err(unknown_mmio("read", address))
     }
@@ -137,6 +204,10 @@ impl Spg290Devices {
             if !self.audio.interrupt_pending() {
                 self.pending_interrupts &= !(1_u64 << SPU_INTERRUPT_SOURCE);
             }
+            return Ok(());
+        }
+        if (SPU_BASE..=SPU_END).contains(&address) && address & 3 == 0 {
+            self.spu_registers[((address - SPU_BASE) / 4) as usize] = value;
             return Ok(());
         }
         if self.video.write(address, value).is_some() {
@@ -161,9 +232,22 @@ impl Spg290Devices {
             }
             return Ok(());
         }
+        if (C3_STUB_START..=C3_STUB_END).contains(&address) {
+            return Ok(());
+        }
+        if (UART_BASE..=UART_END).contains(&address) {
+            return self
+                .uart
+                .write(address - UART_BASE, value)
+                .ok_or(unknown_mmio("write", address));
+        }
         if address == GPIO_OUTPUT {
             self.gpio_output = value;
             self.card.write_line(value & 2 != 0);
+            return Ok(());
+        }
+        if let Some(index) = system_config_register_index(address) {
+            self.system_config_registers[index] = value;
             return Ok(());
         }
         if address == INTERRUPT_PRIORITY_MASTER {
@@ -188,6 +272,10 @@ impl Spg290Devices {
                 value & 0x00ff_ffff;
             return Ok(());
         }
+        if (INTERRUPT_MASK_START..=INTERRUPT_MASK_END).contains(&address) {
+            self.interrupt_masks[((address - INTERRUPT_MASK_START) / 4) as usize] = value;
+            return Ok(());
+        }
         if let Some((timer, offset)) = timer_address(address) {
             self.timers[timer]
                 .write(offset, value)
@@ -204,6 +292,18 @@ impl Spg290Devices {
         }
         if let Some(timer) = timer_gate_index(address) {
             self.timers[timer].set_gate(value);
+            return Ok(());
+        }
+        if let Some(index) = miu_register_index(address) {
+            self.miu_registers[index] = value;
+            return Ok(());
+        }
+        if let Some(index) = buffer_control_register_index(address) {
+            self.buffer_control_registers[index] = value;
+            return Ok(());
+        }
+        if let Some(index) = clock_register_index(address) {
+            self.clock_registers[index] = value;
             return Ok(());
         }
         Err(unknown_mmio("write", address))
@@ -249,6 +349,11 @@ impl Spg290Devices {
         self.cd.set_disc(sector_count);
     }
 
+    pub(crate) fn external_rom_selected(&self) -> bool {
+        let index = ((0x0820_0004 - SYSTEM_CONFIG_START) / 4) as usize;
+        self.system_config_registers[index] & (1 << 24) != 0
+    }
+
     pub(crate) fn take_cd_dma_request(&mut self) -> Option<CdDmaRequest> {
         self.cd.take_dma_request()
     }
@@ -280,6 +385,10 @@ impl Spg290Devices {
 
     pub(crate) fn drain_audio_samples(&mut self, destination: &mut Vec<i16>) {
         self.audio.drain_samples(destination);
+    }
+
+    pub(crate) fn drain_uart_output(&mut self, destination: &mut Vec<u8>) {
+        self.uart.drain_output(destination);
     }
 
     fn cd_disc_sectors(&self) -> Option<u32> {
@@ -588,6 +697,34 @@ fn timer_gate_index(address: u32) -> Option<usize> {
     }
 }
 
+fn clock_register_index(address: u32) -> Option<usize> {
+    if !(CLOCK_REGISTER_START..=CLOCK_REGISTER_END).contains(&address) || address & 3 != 0 {
+        return None;
+    }
+    Some(((address - CLOCK_REGISTER_START) / 4) as usize)
+}
+
+fn system_config_register_index(address: u32) -> Option<usize> {
+    if !(SYSTEM_CONFIG_START..=SYSTEM_CONFIG_END).contains(&address) || address & 3 != 0 {
+        return None;
+    }
+    Some(((address - SYSTEM_CONFIG_START) / 4) as usize)
+}
+
+fn miu_register_index(address: u32) -> Option<usize> {
+    if !(MIU_REGISTER_START..=MIU_REGISTER_END).contains(&address) || address & 3 != 0 {
+        return None;
+    }
+    Some(((address - MIU_REGISTER_START) / 4) as usize)
+}
+
+fn buffer_control_register_index(address: u32) -> Option<usize> {
+    if !(BUFFER_CONTROL_START..=BUFFER_CONTROL_END).contains(&address) || address & 3 != 0 {
+        return None;
+    }
+    Some(((address - BUFFER_CONTROL_START) / 4) as usize)
+}
+
 fn unknown_mmio(access: &'static str, address: u32) -> EmulatorError {
     EmulatorError::UnknownMmio { access, address }
 }
@@ -699,6 +836,42 @@ mod tests {
             devices.read_u32(INTERRUPT_PRIORITY_START + 8).unwrap(),
             0x00ff_ffff
         );
+    }
+
+    #[test]
+    fn clock_configuration_registers_round_trip() {
+        let mut devices = Spg290Devices::new();
+
+        devices.write_u32(0x0821_005c, 0x102).unwrap();
+
+        assert_eq!(devices.read_u32(0x0821_005c).unwrap(), 0x102);
+    }
+
+    #[test]
+    fn system_strap_reports_external_rom_boot_configuration() {
+        let devices = Spg290Devices::new();
+
+        assert_eq!(devices.read_u32(SYSTEM_STRAP_STATUS).unwrap(), 3);
+    }
+
+    #[test]
+    fn miu_configuration_registers_round_trip() {
+        let mut devices = Spg290Devices::new();
+
+        devices.write_u32(0x0807_0060, 0x8000_1234).unwrap();
+
+        assert_eq!(devices.read_u32(0x0807_0060).unwrap(), 0x8000_1234);
+    }
+
+    #[test]
+    fn spu_register_and_internal_sram_windows_round_trip() {
+        let mut devices = Spg290Devices::new();
+
+        devices.write_u32(SPU_BASE, 0x00ff).unwrap();
+        devices.write_u32(SPU_BASE + 0xc000, 0x1234_5678).unwrap();
+
+        assert_eq!(devices.read_u32(SPU_BASE).unwrap(), 0x00ff);
+        assert_eq!(devices.read_u32(SPU_BASE + 0xc000).unwrap(), 0x1234_5678);
     }
 
     #[test]

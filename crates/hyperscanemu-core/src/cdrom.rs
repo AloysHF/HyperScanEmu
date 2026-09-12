@@ -14,6 +14,7 @@ pub(crate) struct CdDmaRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CdServo {
+    system_control: u32,
     address: u32,
     data: u32,
     buffer_start: u32,
@@ -25,10 +26,12 @@ pub(crate) struct CdServo {
     seek_frame: u8,
     seek_lba: u32,
     sector_size: u32,
+    dma_control: u32,
     dsp_data: u32,
     frame_found: bool,
     control0: u32,
     control1: u32,
+    auxiliary_control: u32,
     skip: u16,
     dsp_registers: [u32; 16],
     dsp_memory: Box<[u32]>,
@@ -43,6 +46,7 @@ pub(crate) struct CdServo {
 impl Default for CdServo {
     fn default() -> Self {
         Self {
+            system_control: 0,
             address: 0,
             data: 0,
             buffer_start: 0,
@@ -54,10 +58,12 @@ impl Default for CdServo {
             seek_frame: 0,
             seek_lba: 0,
             sector_size: 0,
+            dma_control: 0,
             dsp_data: 0,
             frame_found: false,
             control0: 0,
             control1: 0,
+            auxiliary_control: 0,
             skip: 0,
             dsp_registers: [0; 16],
             dsp_memory: vec![0; 0x1_0000].into_boxed_slice(),
@@ -88,6 +94,7 @@ impl CdServo {
 
     pub(crate) fn read(&self, offset: u32) -> Option<u32> {
         match offset {
+            0x00 => Some(self.system_control),
             0x08 => Some(self.data),
             0x0c => Some(0),
             0x40 => Some(self.control0),
@@ -100,12 +107,15 @@ impl CdServo {
             0x64 => Some(self.buffer_end),
             0x68 => Some(self.buffer_pointer),
             0x6c => Some(self.sector_size),
+            0x70 => Some(self.dma_control),
+            0x80 => Some(self.auxiliary_control),
             _ => None,
         }
     }
 
     pub(crate) fn write(&mut self, offset: u32, value: u32) -> Option<()> {
         match offset {
+            0x00 => self.system_control = value,
             0x04 => self.address = value,
             0x08 => self.data = value,
             0x0c => {
@@ -132,6 +142,8 @@ impl CdServo {
             0x64 => self.buffer_end = value,
             0x68 => self.buffer_pointer = value,
             0x6c => self.sector_size = value,
+            0x70 => self.dma_control = value,
+            0x80 => self.auxiliary_control = value,
             _ => return None,
         }
         Some(())
@@ -329,6 +341,15 @@ mod tests {
         write_dsp(&mut servo, 0x032, 0);
         assert_eq!(read_dsp(&mut servo, 0x07c), 1);
         assert_eq!(read_dsp(&mut servo, 0x07d), 2);
+    }
+
+    #[test]
+    fn auxiliary_control_register_round_trips() {
+        let mut servo = CdServo::default();
+
+        servo.write(0x80, 3).unwrap();
+
+        assert_eq!(servo.read(0x80), Some(3));
     }
 
     #[test]

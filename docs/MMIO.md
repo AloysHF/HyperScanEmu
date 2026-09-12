@@ -1,21 +1,25 @@
 # SPG290 MMIO status
 
-The bus accepts only explicitly modeled 32-bit MMIO registers. Unknown addresses
-and unsupported access widths stop execution with the access type and address.
+The bus accepts explicitly modeled MMIO registers with 8-bit, 16-bit and 32-bit
+little-endian accesses. Unknown addresses stop execution with the access type and
+address.
 
 Implemented today:
 
-- PPU register/RAM windows at `0x0801_0000`, with cycle-driven VBlank status and IRQ source 53;
+- PPU register/RAM windows at `0x0801_0000`, including separate character and sprite palettes, with cycle-driven VBlank status and IRQ source 53;
+- SPU register and internal SRAM windows, while DAC FIFO behavior remains the first synthesized audio path;
 - DAC FIFO control at `0x0805_1034` through `0x0805_1474`, plus clock and buffer registers;
 - TVE mode/fade control, triple framebuffer addresses, buffer selection and MIU ready status;
-- interrupt pending, software interrupt and priority registers at `0x080a_0000` through `0x080a_001c`;
-- CD servo registers at `0x0806_0004` through `0x0806_006c`;
+- interrupt pending, software interrupt, priority and mask registers at `0x080a_0000` through `0x080a_0024`;
+- CD servo registers at `0x0806_0000` through `0x0806_0080`;
 - deterministic 1×/2×/4×/8× sector scheduling, raw-sector ring-buffer DMA and IRQ source 60;
 - firmware-visible CD DSP commands, program memory, disc identification and single-track Q subchannel;
 - SPG290 I²C master registers at `0x0813_0020` through `0x0813_0038`;
 - cycle-scheduled 8-bit, 16-bit and repeating I²C transfers, acknowledge bits and IRQ source 39;
 - both HyperScan controllers, including buttons, analog axes and sampled-byte checksums;
+- UART setup, ready/empty status and deterministic transmit capture;
 - RFID output on GPIO bit 1 at `0x0820_0024` and response input at `0x0820_0068`;
+- system configuration, clock, MIU and buffer-control register files needed by BIOS initialization;
 - six timer register blocks at `0x0816_0000` through `0x0816_5fff`;
 - timer gate/reload controls beginning at `0x0821_006c`;
 - shared timer clock selection at `0x0821_00e4`;
@@ -42,8 +46,9 @@ are placeholders pending a subcode conformance test.
 The display path schedules NTSC/PAL frames from the 27 MHz pixel clock and
 converts the selected RGB565 direct framebuffer to XRGB8888. Progressive output
 duplicates line pairs as observed. PPU bitmap layers support line tables,
-positions, RGB565/ARGB1555 transparency, depth and blending. Character tiles and
-sprites are not composed yet.
+positions, RGB565/ARGB1555 transparency, depth and blending. Character tiles use
+number tables and the character palette; sprites use their descriptor RAM,
+pattern buffer and independent palette.
 
 The interrupt controller exposes peripheral level state using the documented
 vector-to-pending-bit mapping. Priority fields are retained and readable; the CPU

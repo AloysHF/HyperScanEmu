@@ -65,6 +65,7 @@ impl Score7 {
             pending_interrupts: 0,
         };
         cpu.control[CR_EXCEPTION_VECTOR] = RESET_PC;
+        cpu.control[29] = 0x2000_0000;
         cpu
     }
 
@@ -935,6 +936,7 @@ mod tests {
 
         assert_eq!(cpu.pc(), RESET_PC);
         assert_eq!(cpu.control_register(CR_EXCEPTION_VECTOR), Some(RESET_PC));
+        assert_eq!(cpu.control_register(29), Some(0x2000_0000));
         assert_eq!(cpu.register(4), Some(0));
     }
 

@@ -9,6 +9,7 @@ mod emulator;
 mod error;
 mod firmware;
 mod input;
+mod uart;
 mod video;
 
 pub use bus::{BootSource, Bus, ADDRESS_MASK, DRAM_SIZE, INTERNAL_SRAM_SIZE};

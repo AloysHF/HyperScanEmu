@@ -23,6 +23,7 @@ pub struct Emulator {
     disc: Option<DiscImage>,
     framebuffer: Vec<u32>,
     audio_samples: Vec<i16>,
+    uart_output: Vec<u8>,
     input: InputState,
     frame_index: u64,
     display_width: usize,
@@ -36,6 +37,7 @@ impl Emulator {
             disc: None,
             framebuffer: vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
+            uart_output: Vec::new(),
             input: InputState::default(),
             frame_index: 0,
             display_width: 320,
@@ -49,6 +51,7 @@ impl Emulator {
         self.bus.set_disc(self.disc.as_ref());
         self.framebuffer.fill(0);
         self.audio_samples.clear();
+        self.uart_output.clear();
         self.input = InputState::default();
         self.frame_index = 0;
         self.display_width = 320;
@@ -146,6 +149,11 @@ impl Emulator {
         &self.audio_samples
     }
 
+    pub fn drain_uart_output(&mut self) -> Vec<u8> {
+        self.bus.drain_uart_output(&mut self.uart_output);
+        std::mem::take(&mut self.uart_output)
+    }
+
     pub fn frame_index(&self) -> u64 {
         self.frame_index
     }
@@ -212,9 +220,9 @@ mod tests {
         let addi_r4_1 = (1 << 25) | (4 << 20) | (1 << 1);
         let mut internal = vec![0; INTERNAL_ROM_SIZE];
         let mut bios = vec![0; BIOS_ROM_SIZE];
-        internal[0..4].copy_from_slice(&pack32(ldi_r4_7).to_le_bytes());
-        internal[4..8].copy_from_slice(&pack32(addi_r4_1).to_le_bytes());
-        bios[0] = 1;
+        internal[INTERNAL_ROM_SIZE - 1] = 1;
+        bios[0..4].copy_from_slice(&pack32(ldi_r4_7).to_le_bytes());
+        bios[4..8].copy_from_slice(&pack32(addi_r4_1).to_le_bytes());
         let firmware = Firmware::from_parts(&internal, &bios).unwrap();
         let mut emulator = Emulator::new(firmware);
 

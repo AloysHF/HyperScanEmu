@@ -7,12 +7,13 @@ The `hyperscanemu` binary supports three deterministic workflows:
 ```text
 hyperscanemu inspect-disc <media.bin|media.cue|media.zip>
 hyperscanemu trace <internal-rom.bin> <bios.bin> [steps]
-hyperscanemu run <internal-rom.bin> <bios.bin> <media> [frames]
+hyperscanemu run <internal-rom.bin> <bios.bin> <media> [frames] [frame.ppm]
 ```
 
 `run` executes complete video frames and prints the final geometry, framebuffer
-fingerprint and program counter. It is intended for headless regressions while
-the interactive standalone backend is still under development.
+fingerprint, program counter and key video state. If the final path is supplied,
+it also writes a binary PPM screenshot. This is intended for headless regressions
+while the interactive standalone backend is still under development.
 
 ## libretro
 

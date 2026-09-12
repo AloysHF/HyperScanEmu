@@ -29,12 +29,18 @@ pub(crate) struct PpuLayerState {
     pub buffer_start: u32,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PpuRenderState {
     pub enabled: bool,
+    pub sprite_enabled: bool,
+    pub sprite_max: usize,
+    pub sprite_buffer_start: u32,
     pub blend_subtract: bool,
     pub transparent_rgb: u32,
     pub layers: [PpuLayerState; 3],
+    pub character_palette: Vec<u16>,
+    pub sprite_palette: Vec<u16>,
+    pub sprites: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +50,7 @@ pub(crate) struct VideoController {
     irq_control: u32,
     irq_status: u32,
     tve_control: u32,
+    tve_registers: [u32; 21],
     fade: u8,
     buffer_start: [u32; 3],
     buffer_control: u8,
@@ -58,6 +65,7 @@ impl Default for VideoController {
             irq_control: 0,
             irq_status: 0,
             tve_control: 0,
+            tve_registers: [0; 21],
             fade: 0,
             buffer_start: [0; 3],
             buffer_control: 3,
@@ -77,6 +85,9 @@ impl VideoController {
             }
             MIU_STATUS => Some(1),
             TV_BUFFER_CONTROL => Some(u32::from(self.buffer_control)),
+            0x0803_0000..=0x0803_0050 if address & 3 == 0 => {
+                Some(self.tve_registers[((address - TVE_CONTROL) / 4) as usize])
+            }
             _ => None,
         }
     }
@@ -90,6 +101,9 @@ impl VideoController {
                 self.buffer_start[((address - TV_BUFFER_START) / 4) as usize] = value;
             }
             TV_BUFFER_CONTROL => self.buffer_control = (value & 3) as u8,
+            0x0803_0000..=0x0803_0050 if address & 3 == 0 => {
+                self.tve_registers[((address - TVE_CONTROL) / 4) as usize] = value;
+            }
             _ => return None,
         }
         Some(())
@@ -157,10 +171,34 @@ impl VideoController {
         };
         PpuRenderState {
             enabled: self.ppu_registers[0] & 0x1000 != 0,
+            sprite_enabled: self.ppu_registers[1] & 1 != 0,
+            sprite_max: (self.ppu_registers[2] & 0x1ff) as usize,
+            sprite_buffer_start: self.ppu_registers[0xd0 / 4],
             blend_subtract: self.ppu_registers[0x0c / 4] & 1 != 0,
             transparent_rgb: self.ppu_registers[0x10 / 4],
             layers: [layer(0), layer(1), layer(2)],
+            character_palette: self.ppu_words(0x1000, 0x800),
+            sprite_palette: self.ppu_words(0x1800, 0x800),
+            sprites: self.ppu_dwords(0x4000, 0x1000),
         }
+    }
+
+    fn ppu_words(&self, start: usize, length: usize) -> Vec<u16> {
+        self.ppu_memory[start..start + length]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .collect()
+    }
+
+    fn ppu_dwords(&self, start: usize, length: usize) -> Vec<u32> {
+        self.ppu_memory[start..start + length]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u32::from_le_bytes(*bytes))
+            .collect()
     }
 
     fn dimensions(&self) -> (usize, usize) {
