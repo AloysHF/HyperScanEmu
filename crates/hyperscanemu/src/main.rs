@@ -2,7 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fs;
 
-use hyperscanemu_core::{Emulator, Firmware, StepOutcome};
+use hyperscanemu_core::{CdCommandKind, Emulator, Firmware, StepOutcome};
 use hyperscanemu_media::load_disc;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             emulator.bus().read_u32(0x0801_0064)?,
             emulator.bus().read_u32(0x0809_0020)?
         );
+        print_cd_trace(&emulator);
         if let Some(path) = args.get(5) {
             fs::write(path, encode_ppm(emulator.framebuffer(), width, height))?;
             println!("wrote frame to {path}");
@@ -119,6 +120,38 @@ fn print_uart(emulator: &mut Emulator) {
     if !output.is_empty() {
         eprintln!("UART: {}", String::from_utf8_lossy(&output));
     }
+}
+
+fn print_cd_trace(emulator: &Emulator) {
+    let trace = emulator.cd_command_trace();
+    if trace.is_empty() {
+        return;
+    }
+    let control = trace
+        .iter()
+        .filter(|event| !(0x340..=0x34c).contains(&event.address))
+        .collect::<Vec<_>>();
+    let start = control.len().saturating_sub(32);
+    let events = control[start..]
+        .iter()
+        .map(|event| {
+            let kind = match event.kind {
+                CdCommandKind::Read => 'R',
+                CdCommandKind::Write => 'W',
+            };
+            format!(
+                "{kind}{:03x}={:02x}@{:08x}/{:08x}",
+                event.address, event.data, event.pc, event.link
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("CD trace: {events}");
+    let state = emulator.cd_servo_state();
+    println!(
+        "CD state: sector {}, seek LBA {}, skip {}, speed {}x, frame found {}",
+        state.current_sector, state.seek_lba, state.skip, state.speed, state.frame_found
+    );
 }
 
 fn usage() -> &'static str {

@@ -1,7 +1,7 @@
 use crate::{
     audio::{AudioDmaRequest, DacFifo},
     card::CardDevice,
-    cdrom::{CdDmaRequest, CdServo},
+    cdrom::{CdCommandTrace, CdDmaRequest, CdServo, CdServoState},
     uart::Uart,
     video::{DirectFrameState, PpuRenderState, VideoController},
     CardImage, EmulatorError, InputState,
@@ -347,6 +347,18 @@ impl Spg290Devices {
 
     pub fn set_disc(&mut self, sector_count: Option<u32>) {
         self.cd.set_disc(sector_count);
+    }
+
+    pub(crate) fn cd_command_trace(&self) -> Vec<CdCommandTrace> {
+        self.cd.command_trace()
+    }
+
+    pub(crate) fn set_execution_context(&mut self, pc: u32, link: u32) {
+        self.cd.set_execution_context(pc, link);
+    }
+
+    pub(crate) fn cd_servo_state(&self) -> CdServoState {
+        self.cd.state()
     }
 
     pub(crate) fn external_rom_selected(&self) -> bool {

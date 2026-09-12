@@ -12,9 +12,12 @@ The current reference run completes 15 million instructions without an unknown
 MMIO or unsupported-instruction stop. A 300-frame media run reaches a 640x480
 HyperScan startup image and produces a stable non-black framebuffer fingerprint.
 At 900 frames the BIOS initializes and verifies the CD DSP firmware, reads the
-TOC and identifies the disc. The remaining observed stop is an HLE analog-servo
-motor timeout before retail-title handoff.
+TOC and identifies the disc. Deterministic analog feedback now completes the
+focus and tracking calibration stages without a motor timeout. A 3600-frame run
+remains stable, but the firmware repeatedly performs coarse and fine track jumps
+around the lead-in boundary instead of handing control to the retail title.
 
-UART output and the final PC, PPU/TVE controls and layer state are printed to make
-regressions diagnosable without a graphical frontend. The optional PPM output is
-the visual oracle; fingerprints alone do not establish rendering correctness.
+UART output and the final PC, PPU/TVE controls, layer state, CD command origins
+and servo position are printed to make regressions diagnosable without a
+graphical frontend. The optional PPM output is the visual oracle; fingerprints
+alone do not establish rendering correctness.

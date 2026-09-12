@@ -189,6 +189,18 @@ impl Bus {
         self.devices.set_disc(disc.map(DiscImage::sector_count));
     }
 
+    pub fn cd_command_trace(&self) -> Vec<crate::CdCommandTrace> {
+        self.devices.cd_command_trace()
+    }
+
+    pub(crate) fn set_execution_context(&mut self, pc: u32, link: u32) {
+        self.devices.set_execution_context(pc, link);
+    }
+
+    pub fn cd_servo_state(&self) -> crate::CdServoState {
+        self.devices.cd_servo_state()
+    }
+
     pub fn service_cd(&mut self, disc: &DiscImage) -> Result<(), EmulatorError> {
         while let Some(request) = self.devices.take_cd_dma_request() {
             let sector = disc.read_raw_sector(request.lba)?;

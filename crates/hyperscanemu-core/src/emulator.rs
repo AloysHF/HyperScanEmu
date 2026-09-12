@@ -86,6 +86,14 @@ impl Emulator {
         self.disc.as_ref()
     }
 
+    pub fn cd_command_trace(&self) -> Vec<crate::CdCommandTrace> {
+        self.bus.cd_command_trace()
+    }
+
+    pub fn cd_servo_state(&self) -> crate::CdServoState {
+        self.bus.cd_servo_state()
+    }
+
     pub fn cpu(&self) -> &Score7 {
         &self.cpu
     }
@@ -95,6 +103,8 @@ impl Emulator {
     }
 
     pub fn step(&mut self) -> Result<StepOutcome, EmulatorError> {
+        self.bus
+            .set_execution_context(self.cpu.pc(), self.cpu.register(3).unwrap_or(0));
         let outcome = self.cpu.step(&mut self.bus)?;
         if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
             self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;

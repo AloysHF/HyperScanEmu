@@ -1,7 +1,34 @@
+use std::collections::VecDeque;
+
 use crate::EmulatorError;
 
 const LEAD_IN_SECTORS: u32 = 7_500;
 const LEAD_OUT_SECTORS: u32 = 6_750;
+const COMMAND_TRACE_CAPACITY: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CdCommandKind {
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CdCommandTrace {
+    pub kind: CdCommandKind,
+    pub address: u32,
+    pub data: u32,
+    pub pc: u32,
+    pub link: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CdServoState {
+    pub current_sector: u32,
+    pub seek_lba: u32,
+    pub skip: u16,
+    pub speed: u8,
+    pub frame_found: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CdDmaRequest {
@@ -41,6 +68,9 @@ pub(crate) struct CdServo {
     phase: u64,
     pending_dma: Option<CdDmaRequest>,
     noise: u32,
+    command_trace: VecDeque<CdCommandTrace>,
+    execution_pc: u32,
+    execution_link: u32,
 }
 
 impl Default for CdServo {
@@ -73,6 +103,9 @@ impl Default for CdServo {
             phase: 0,
             pending_dma: None,
             noise: 0x2905_2006,
+            command_trace: VecDeque::with_capacity(COMMAND_TRACE_CAPACITY),
+            execution_pc: 0,
+            execution_link: 0,
         }
     }
 }
@@ -179,6 +212,25 @@ impl CdServo {
         self.frame_found
     }
 
+    pub(crate) fn command_trace(&self) -> Vec<CdCommandTrace> {
+        self.command_trace.iter().copied().collect()
+    }
+
+    pub(crate) fn set_execution_context(&mut self, pc: u32, link: u32) {
+        self.execution_pc = pc;
+        self.execution_link = link;
+    }
+
+    pub(crate) fn state(&self) -> CdServoState {
+        CdServoState {
+            current_sector: self.current_sector,
+            seek_lba: self.seek_lba,
+            skip: self.skip,
+            speed: self.speed,
+            frame_found: self.frame_found,
+        }
+    }
+
     fn advance_sector(&mut self) -> Result<(), EmulatorError> {
         if self.control1 & 4 == 0 && self.current_sector == LEAD_IN_SECTORS + self.seek_lba {
             if self.control0 & (1 << 15) != 0 {
@@ -212,6 +264,12 @@ impl CdServo {
     }
 
     fn execute_read_command(&mut self) {
+        if self.address == 0x083 {
+            self.noise = self
+                .noise
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+        }
         self.data = match self.address {
             0x079 => 0xe3,
             0x07b => 0x06,
@@ -227,9 +285,11 @@ impl CdServo {
             0x41f => 0xff,
             _ => 0,
         };
+        self.record_command(CdCommandKind::Read);
     }
 
     fn execute_write_command(&mut self) {
+        self.record_command(CdCommandKind::Write);
         match self.address {
             0x013 => {
                 if self.data & 1 != 0 {
@@ -284,6 +344,9 @@ impl CdServo {
     }
 
     fn q_subchannel(&self, index: usize) -> u8 {
+        if self.current_sector < LEAD_IN_SECTORS {
+            return self.lead_in_q_subchannel(index);
+        }
         let relative = self.current_sector.saturating_sub(LEAD_IN_SECTORS);
         let (track, track_index, track_frame) = if relative < 150 {
             (1, 0, relative)
@@ -303,6 +366,47 @@ impl CdServo {
             binary_to_bcd(relative % 75),
         ];
         values.get(index).copied().unwrap_or(0)
+    }
+
+    fn lead_in_q_subchannel(&self, index: usize) -> u8 {
+        let entry = self.current_sector % 4;
+        let point = [0xa0, 0xa1, 0xa2, 0x01][entry as usize];
+        let program_end = self.disc_sectors.unwrap_or(0).saturating_add(150);
+        let absolute = match entry {
+            0 | 1 => 1 << 16,
+            2 => program_end,
+            _ => 150,
+        };
+        let values = [
+            0x41,
+            0,
+            point,
+            binary_to_bcd(self.current_sector / (60 * 75)),
+            binary_to_bcd((self.current_sector / 75) % 60),
+            binary_to_bcd(self.current_sector % 75),
+            0,
+            binary_to_bcd(absolute / (60 * 75)),
+            binary_to_bcd((absolute / 75) % 60),
+            binary_to_bcd(absolute % 75),
+        ];
+        values.get(index).copied().unwrap_or(0)
+    }
+
+    fn record_command(&mut self, kind: CdCommandKind) {
+        let event = CdCommandTrace {
+            kind,
+            address: self.address,
+            data: self.data,
+            pc: self.execution_pc,
+            link: self.execution_link,
+        };
+        if self.command_trace.back() == Some(&event) {
+            return;
+        }
+        if self.command_trace.len() == COMMAND_TRACE_CAPACITY {
+            self.command_trace.pop_front();
+        }
+        self.command_trace.push_back(event);
     }
 }
 
@@ -350,6 +454,87 @@ mod tests {
         servo.write(0x80, 3).unwrap();
 
         assert_eq!(servo.read(0x80), Some(3));
+    }
+
+    #[test]
+    fn analog_status_noise_is_deterministic_and_changes() {
+        let mut first = CdServo::default();
+        let mut second = CdServo::default();
+
+        let first_sample = read_dsp(&mut first, 0x083);
+        let next_sample = read_dsp(&mut first, 0x083);
+
+        assert_ne!(first_sample, next_sample);
+        assert_eq!(first_sample, read_dsp(&mut second, 0x083));
+        assert_eq!(next_sample, read_dsp(&mut second, 0x083));
+    }
+
+    #[test]
+    fn command_trace_deduplicates_repeated_polls() {
+        let mut servo = CdServo::default();
+
+        assert_eq!(read_dsp(&mut servo, 0x079), 0xe3);
+        assert_eq!(read_dsp(&mut servo, 0x079), 0xe3);
+        write_dsp(&mut servo, 0x020, 2);
+
+        assert_eq!(
+            servo.command_trace(),
+            [
+                CdCommandTrace {
+                    kind: CdCommandKind::Read,
+                    address: 0x079,
+                    data: 0xe3,
+                    pc: 0,
+                    link: 0,
+                },
+                CdCommandTrace {
+                    kind: CdCommandKind::Write,
+                    address: 0x020,
+                    data: 2,
+                    pc: 0,
+                    link: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn lead_in_q_subchannel_cycles_through_toc_entries() {
+        let mut servo = CdServo::default();
+        servo.set_disc(Some(20_000));
+
+        let points = (0..4)
+            .map(|_| {
+                let point = read_dsp(&mut servo, 0x342);
+                servo.current_sector += 1;
+                point
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(points, [0xa0, 0xa1, 0xa2, 0x01]);
+        servo.current_sector = 2;
+        assert_eq!(read_dsp(&mut servo, 0x347), 0x04);
+        assert_eq!(read_dsp(&mut servo, 0x348), 0x28);
+        assert_eq!(read_dsp(&mut servo, 0x349), 0x50);
+    }
+
+    #[test]
+    fn servo_state_reports_seek_diagnostics() {
+        let mut servo = CdServo::default();
+        servo.set_disc(Some(100));
+        servo.skip = 127;
+        servo.current_sector = 321;
+
+        assert_eq!(
+            servo.state(),
+            CdServoState {
+                current_sector: 321,
+                seek_lba: 0,
+                skip: 127,
+                speed: 1,
+                frame_found: false,
+            }
+        );
     }
 
     #[test]
