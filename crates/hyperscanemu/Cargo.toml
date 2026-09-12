@@ -12,3 +12,8 @@ path = "src/main.rs"
 [dependencies]
 hyperscanemu-core = { path = "../hyperscanemu-core" }
 hyperscanemu-media = { path = "../hyperscanemu-media" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cpal = "0.18.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+minifb = "0.28"

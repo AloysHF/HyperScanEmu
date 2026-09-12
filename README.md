@@ -1,8 +1,9 @@
 # HyperScanEmu
 
 HyperScanEmu is an evidence-driven, clean-room Rust emulator for the Mattel
-HyperScan. It now boots the retail BIOS and renders the 640x480 startup screen
-with real media attached. Retail games are not playable yet.
+HyperScan. It boots the retail BIOS and reaches a retail game's loading screen
+and opening animation with real media attached. Retail gameplay is not yet
+validated.
 
 ## Intended target
 
@@ -53,13 +54,23 @@ Validate raw BIN, CUE or packaged ZIP media without firmware:
 cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
 ```
 
+Open the interactive standalone emulator:
+
+```bash
+cargo run -p hyperscanemu -- play <internal-rom.bin> <bios.bin> <media>
+```
+
+The desktop frontend provides a resizable aspect-correct window, fullscreen
+mode, two keyboard-controlled gamepads, system audio, pause, reset, FPS status,
+and native-resolution PNG screenshots. See `docs/STANDALONE.md` for controls and
+all options.
+
 Run a deterministic number of complete frames with validated media:
 
 ```bash
 cargo run -p hyperscanemu -- run <internal-rom.bin> <bios.bin> <media> [frames] [frame.ppm]
 ```
 
-See `docs/FRONTENDS.md` for libretro firmware placement and current frontend
-limitations.
+See `docs/FRONTENDS.md` for the frontend overview and libretro firmware placement.
 
 Do not commit or distribute copyrighted ROMs, firmware, games, extracted assets, logs, or local research material.

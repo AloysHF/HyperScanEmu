@@ -6,6 +6,8 @@ use crate::{
 pub const DISPLAY_WIDTH: usize = 640;
 pub const DISPLAY_HEIGHT: usize = 480;
 pub const EMULATION_STRATEGY: &str = "lle";
+const INITIAL_DISPLAY_WIDTH: usize = 320;
+const INITIAL_DISPLAY_HEIGHT: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionReport {
@@ -35,13 +37,13 @@ impl Emulator {
             cpu: Score7::new(),
             bus: Bus::new(firmware),
             disc: None,
-            framebuffer: vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT],
+            framebuffer: vec![0; INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
             uart_output: Vec::new(),
             input: InputState::default(),
             frame_index: 0,
-            display_width: 320,
-            display_height: 240,
+            display_width: INITIAL_DISPLAY_WIDTH,
+            display_height: INITIAL_DISPLAY_HEIGHT,
         }
     }
 
@@ -49,13 +51,15 @@ impl Emulator {
         self.cpu.reset();
         self.bus.reset();
         self.bus.set_disc(self.disc.as_ref());
+        self.framebuffer
+            .resize(INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT, 0);
         self.framebuffer.fill(0);
         self.audio_samples.clear();
         self.uart_output.clear();
         self.input = InputState::default();
         self.frame_index = 0;
-        self.display_width = 320;
-        self.display_height = 240;
+        self.display_width = INITIAL_DISPLAY_WIDTH;
+        self.display_height = INITIAL_DISPLAY_HEIGHT;
     }
 
     pub fn set_input(&mut self, input: InputState) {
@@ -210,6 +214,7 @@ mod tests {
         emulator.reset();
 
         assert_eq!(emulator.frame_index(), 0);
+        assert_eq!(emulator.framebuffer().len(), 320 * 240);
         assert!(emulator.framebuffer().iter().all(|pixel| *pixel == 0));
         assert!(emulator.audio_samples().is_empty());
     }
