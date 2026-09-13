@@ -6,6 +6,8 @@ members = [
     "crates/hyperscanemu-libretro",
     "crates/hyperscanemu-media",
 ]
+# Default build the libretro core for CI/buildbot compatibility
+default-members = ["crates/hyperscanemu-libretro"]
 
 
 [workspace.package]

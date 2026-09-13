@@ -1,6 +1,6 @@
 # Standalone Emulator
 
-This guide covers building and running the standalone `hyperscanemu` binary,
+This guide covers building and running the standalone `hyperscan-emu` binary,
 loading firmware and media, keyboard controls, headless diagnostics, and all
 command-line options.
 
@@ -11,7 +11,7 @@ hardware and media you own.
 
 ```bash
 cargo build -p hyperscanemu --release
-target/release/hyperscanemu play spg290.bin hyperscan.bin game.cue
+target/release/hyperscan-emu play spg290.bin hyperscan.bin game.cue
 ```
 
 BIN, single-track CUE, and ZIP disc packages are accepted. The firmware loader
@@ -20,7 +20,7 @@ requires a 32 KiB SPG290 internal ROM and a 1 MiB HyperScan BIOS.
 ## Synopsis
 
 ```text
-hyperscanemu play [OPTIONS] <INTERNAL_ROM> <BIOS> <MEDIA>
+hyperscan-emu play [OPTIONS] <INTERNAL_ROM> <BIOS> <MEDIA>
 ```
 
 ## Options
@@ -71,7 +71,7 @@ measured frontend FPS once per second.
 ## Headless PNG capture
 
 ```bash
-hyperscanemu play spg290.bin hyperscan.bin game.zip \
+hyperscan-emu play spg290.bin hyperscan.bin game.zip \
   --screenshot startup.png --screenshot-frames 300
 ```
 

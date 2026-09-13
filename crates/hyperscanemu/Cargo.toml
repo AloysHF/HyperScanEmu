@@ -6,7 +6,7 @@ license.workspace = true
 description.workspace = true
 
 [[bin]]
-name = "hyperscanemu"
+name = "hyperscan-emu"
 path = "src/main.rs"
 
 [dependencies]

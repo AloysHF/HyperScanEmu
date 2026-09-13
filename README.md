@@ -1,5 +1,17 @@
 # HyperScanEmu — A Mattel HyperScan emulator written in Rust
 
+<p align="center">
+  <a href="https://aloyshf.github.io/HyperScanEmu/"><img src="https://img.shields.io/badge/Website-HyperScanEmu-E8553A?logo=githubpages&logoColor=white" alt="Website"></a>
+  <a href="https://github.com/AloysHF/HyperScanEmu/actions/workflows/ci.yml"><img src="https://github.com/AloysHF/HyperScanEmu/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://git.libretro.com/libretro/hyperscanemu/-/pipelines"><img src="https://img.shields.io/gitlab/pipeline-status/hyperscanemu?gitlab_url=https%3A%2F%2Fgit.libretro.com%2Flibretro&branch=master&logo=gitlab&label=Pipeline%20Status" alt="Gitlab Pipeline Status" ></a>
+  <a href="https://github.com/AloysHF/HyperScanEmu/releases/latest"><img src="https://img.shields.io/github/v/release/AloysHF/HyperScanEmu" alt="Release"></a>
+  <a href="https://github.com/AloysHF/HyperScanEmu/releases"><img src="https://img.shields.io/github/downloads/AloysHF/HyperScanEmu/total" alt="Downloads"></a>
+  <a href="https://sonarcloud.io/dashboard?id=AloysHF_HyperScanEmu"><img src="https://sonarcloud.io/api/project_badges/measure?project=AloysHF_HyperScanEmu&metric=alert_status" alt="Quality Gate Status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg" alt="License: BSD 3-Clause"></a>
+  <a href="https://discord.gg/7XDdSrYD"><img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://qm.qq.com/q/LAO7DKAWUC"><img src="https://img.shields.io/badge/QQ%E7%BE%A4-Join%20Us-12B7F5?logo=tencent-qq&logoColor=white" alt="QQ Group"></a>
+</p>
+
 HyperScanEmu is an evidence-driven, clean-room Rust emulator for the Mattel
 HyperScan. It boots the retail BIOS and reaches a retail game's loading screen
 and opening animation with real media attached. Retail gameplay is not yet
@@ -65,7 +77,7 @@ Requires [Rust](https://www.rust-lang.org/tools/install) (stable).
 cargo build -p hyperscanemu --release
 ```
 
-The binary is produced at `target/release/hyperscanemu`.
+The binary is produced at `target/release/hyperscan-emu`.
 
 ### Libretro Core
 
