@@ -9,3 +9,6 @@ description.workspace = true
 name = "hyperscanemu_core"
 path = "src/lib.rs"
 
+[dev-dependencies]
+cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"] }
+
