@@ -1,50 +1,467 @@
-<!doctype html>
+<!-- AI生成 -->
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HyperScanEmu — Mattel HyperScan emulator. Under active development.">
-  <title>HyperScanEmu</title>
-  <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: #0b0d12;
-      color: #e8ecf4;
-      line-height: 1.6;
-    }
-    main {
-      text-align: center;
-      padding: 2rem;
-      max-width: 36rem;
-    }
-    h1 {
-      font-size: clamp(1.8rem, 5vw, 2.6rem);
-      margin: 0 0 0.75rem;
-      letter-spacing: 0.02em;
-    }
-    p { color: #9aa3b5; margin: 0.5rem 0; }
-    .status {
-      display: inline-block;
-      margin-top: 1.25rem;
-      padding: 0.45rem 0.9rem;
-      border: 1px solid #243044;
-      border-radius: 999px;
-      color: #6ea8ff;
-      font-size: 0.9rem;
-    }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HyperScanEmu — Mattel HyperScan Emulator</title>
+  <meta name="description" content="HyperScanEmu — 用 Rust 编写的 Mattel HyperScan 模拟器。SPG290 低级仿真，可启动零售 BIOS 与游戏加载画面。">
+  <meta name="theme-color" content="#0A0E14">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <main>
-    <h1>HyperScanEmu</h1>
-    <p>Mattel HyperScan emulator written in Rust.</p>
-    <p>项目仍在开发中，敬请期待。</p>
-    <p class="status">Under active development — stay tuned</p>
-  </main>
+<p data-aigc-mark="1" style="margin:0 0 8px;font-size:10px;line-height:1.3;color:#6b6560;font-weight:400;">AI生成</p>
+
+
+  <!-- ====== NAV ====== -->
+  <nav id="navbar">
+    <div class="nav-inner">
+      <a href="#hero" class="nav-logo">
+        <span class="nav-logo-mark" aria-hidden="true">HS</span>
+        <span>HyperScanEmu</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features" data-i18n="nav-features">核心特性</a>
+        <a href="#gallery" data-i18n="nav-games">兼容进度</a>
+        <a href="#architecture" data-i18n="nav-arch">技术架构</a>
+        <a href="#quickstart" data-i18n="nav-quickstart">快速开始</a>
+        <button id="lang-toggle" class="lang-toggle" aria-label="Switch language">EN</button>
+        <a href="https://github.com/AloysHF/HyperScanEmu" class="nav-github" target="_blank" rel="noopener">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+      <button class="nav-toggle" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ====== HERO ====== -->
+  <section id="hero">
+    <div class="hero-bg">
+      <canvas id="scan-canvas" aria-hidden="true"></canvas>
+    </div>
+    <div class="hero-content">
+      <h1 class="hero-title">
+        <span class="hero-title-line">HyperScan</span>
+        <span class="hero-title-line accent">Emulator</span>
+      </h1>
+      <p class="hero-subtitle" data-i18n="hero-subtitle">让 2006 年的 Mattel HyperScan 在现代设备上重生</p>
+      <p class="hero-desc" data-i18n="hero-desc">用 Rust 编写的 SPG290 低级仿真（LLE）模拟器，启动真实固件与零售光盘镜像，抵达游戏加载画面</p>
+      <div class="hero-badges">
+        <img src="https://img.shields.io/github/v/release/AloysHF/HyperScanEmu?style=for-the-badge" alt="Release">
+        <img src="https://img.shields.io/badge/license-BSD%203--Clause-blue?style=for-the-badge" alt="License">
+        <img src="https://img.shields.io/github/downloads/AloysHF/HyperScanEmu/total?style=for-the-badge&label=downloads" alt="Downloads">
+        <img src="https://sonarcloud.io/api/project_badges/measure?project=AloysHF_HyperScanEmu&metric=alert_status&style=for-the-badge" alt="Quality Gate">
+      </div>
+      <div class="hero-actions">
+        <a href="https://github.com/AloysHF/HyperScanEmu/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75z"/><path d="M7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z"/></svg>
+          <span data-i18n="hero-download">下载</span>
+        </a>
+        <a href="https://github.com/AloysHF/HyperScanEmu" class="btn btn-secondary" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span data-i18n="hero-github">查看源码</span>
+        </a>
+      </div>
+      <div class="hero-shot-wrap" aria-label="Emulator screenshot">
+        <div class="hero-shot-frame">
+          <div class="hero-shot-scan" aria-hidden="true"></div>
+          <img id="hero-shot" src="docs/images/X-Men__USA___USE_.png" alt="HyperScanEmu running X-Men loading screen">
+          <span class="hero-shot-tag">640×480 · LLE boot</span>
+        </div>
+        <p class="hero-shot-note" data-i18n="hero-shot-note">HyperScanEmu 实际启动画面 · X-Men 零售镜像</p>
+      </div>
+    </div>
+    <div class="hero-scroll">
+      <span data-i18n="hero-scroll">向下滚动探索</span>
+      <div class="scroll-arrow"></div>
+    </div>
+  </section>
+
+  <!-- ====== ABOUT ====== -->
+  <section id="about" class="section">
+    <div class="container">
+      <div class="about-grid">
+        <div class="about-text fade-in-up">
+          <h2 data-i18n="about-title">何为 HyperScan？</h2>
+          <p data-i18n="about-p1">Mattel HyperScan 是 2006 年发售的家用游戏主机，核心是 <strong>Sunplus SPG290</strong> SoC（S+Core 7 CPU）。游戏以光盘发行，并可选配 RFID 存档卡。</p>
+          <p data-i18n="about-p2">这台主机生命周期短暂、资料稀缺。HyperScanEmu 选择<strong>固件可见硬件的低级仿真</strong>路线：不猜测私有服务 ABI，而是逐寄存器还原 SPG290 总线、外设与定时行为，让真实 BIOS 与游戏镜像自己跑起来。</p>
+          <div class="about-flow">
+            <div class="flow-item">
+              <div class="flow-icon">💾</div>
+              <span data-i18n="flow-firmware">合法固件 Dump</span>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-item">
+              <div class="flow-icon">💿</div>
+              <span data-i18n="flow-media">BIN / CUE / ZIP</span>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-item highlight">
+              <div class="flow-icon">⚡</div>
+              <span>HyperScanEmu</span>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-item">
+              <div class="flow-icon">✅</div>
+              <span data-i18n="flow-play">启动验证</span>
+            </div>
+          </div>
+        </div>
+        <div class="about-diagram fade-in-up">
+          <div class="spec-card">
+            <h3 data-i18n="spec-title">硬件要点</h3>
+            <ul class="spec-list">
+              <li><span data-i18n="spec-cpu">CPU</span><code>S+Core 7 @ 108 MHz</code></li>
+              <li><span data-i18n="spec-soc">SoC</span><code>Sunplus SPG290</code></li>
+              <li><span data-i18n="spec-video">视频</span><code>TVE + PPU · 640×480</code></li>
+              <li><span data-i18n="spec-audio">音频</span><code>54 MHz DAC · 16-bit PCM</code></li>
+              <li><span data-i18n="spec-media">介质</span><code>CD · MODE1/2352</code></li>
+              <li><span data-i18n="spec-card">存档</span><code>RFID 120-byte cards</code></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== STATS ====== -->
+  <section id="stats" class="section section-dark">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-item fade-in-up">
+          <div class="stat-number" data-target="8">0</div>
+          <div class="stat-label" data-i18n="stat-packages">已测镜像包</div>
+          <div class="stat-sub" data-i18n="stat-packages-sub">合法本地 Dump</div>
+        </div>
+        <div class="stat-item fade-in-up">
+          <div class="stat-number" data-target="6">0</div>
+          <div class="stat-label" data-i18n="stat-pass">抵达加载画面</div>
+          <div class="stat-sub" data-i18n="stat-pass-sub">游戏专属 Loading</div>
+        </div>
+        <div class="stat-item fade-in-up">
+          <div class="stat-number" data-target="640" data-suffix="×480">0</div>
+          <div class="stat-label" data-i18n="stat-res">输出分辨率</div>
+          <div class="stat-sub" data-i18n="stat-res-sub">TVE 直帧 + PPU 图层</div>
+        </div>
+        <div class="stat-item fade-in-up">
+          <div class="stat-number" data-target="15" data-suffix="M+">0</div>
+          <div class="stat-label" data-i18n="stat-trace">参考启动指令数</div>
+          <div class="stat-sub" data-i18n="stat-trace-sub">无未知 MMIO 中止</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== FEATURES ====== -->
+  <section id="features" class="section">
+    <div class="container">
+      <h2 class="section-title fade-in-up" data-i18n="feat-title">核心特性</h2>
+      <p class="section-subtitle fade-in-up" data-i18n="feat-subtitle">从 S+Core 7 解释器到 CD 伺服，全链路 Rust 低级仿真</p>
+      <div class="features-grid">
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+          </div>
+          <h3 data-i18n="feat-cpu-title">SPG290 LLE 核心</h3>
+          <p data-i18n="feat-cpu-desc">S+Core 7 混合 16/32 位指令流解释器，校验式 MMIO 总线，确定性外设调度。未知指令与未知 MMIO 一律结构化中止，绝不静默成功。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 data-i18n="feat-fw-title">真实固件启动</h3>
+          <p data-i18n="feat-fw-desc">32 KiB 内部 ROM + 1 MiB HyperScan BIOS。冷启动走外部 BIOS 窗口，参考运行可完成 1500 万条指令且无未知 MMIO 中止。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h3 data-i18n="feat-disc-title">光盘镜像与 CD 伺服</h3>
+          <p data-i18n="feat-disc-desc">支持 MODE1/2352 BIN、单轨 CUE 与 ZIP，含 ISO/UDF 校验。定时扇区 DMA、模拟反馈与单轨 Q 子通道合成，让固件完成聚焦/循迹标定。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3 data-i18n="feat-video-title">TVE + PPU 显示</h3>
+          <p data-i18n="feat-video-desc">TVE 直帧路径与 PPU 位图/字符/精灵图层，支持调色板、行表、透明、混合与淡入淡出，输出 640×480 画面。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h4"/><path d="M14 12h4"/><path d="M8 10v4"/><path d="M16 10v4"/></svg>
+          </div>
+          <h3 data-i18n="feat-input-title">双手柄 I²C 与 RFID</h3>
+          <p data-i18n="feat-input-desc">周期调度的 I²C 主机暴露双控制器（按键、模拟摇杆、校验和）；GPIO 上实现 120 字节 RFID 卡协议，含 REQA/WUPA/RID/READ/WRITE。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+          </div>
+          <h3 data-i18n="feat-audio-title">DAC 音频通路</h3>
+          <p data-i18n="feat-audio-desc">54 MHz DAC 环形缓冲 DMA 输出无符号 16-bit 立体声 PCM，带半缓冲中断。硬件合成器（PCM/ADPCM 通道）仍在路线图上。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
+          </div>
+          <h3 data-i18n="feat-frontend-title">Standalone 前端</h3>
+          <p data-i18n="feat-frontend-desc">可缩放窗口、全屏、双人键盘映射、PNG 截图。亦可完全 headless 运行，用统一生命周期做回归与帧指纹。</p>
+        </div>
+        <div class="feature-card fade-in-up">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+          </div>
+          <h3 data-i18n="feat-libretro-title">libretro 核心</h3>
+          <p data-i18n="feat-libretro-desc">完整 RetroArch 集成，固件从 frontend system 目录加载。Windows / macOS / Linux / Android / iOS / webOS 多平台目标。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== GALLERY ====== -->
+  <section id="gallery" class="section section-dark">
+    <div class="container">
+      <h2 class="section-title fade-in-up" data-i18n="gallery-title">兼容进度</h2>
+      <p class="section-subtitle fade-in-up" data-i18n="gallery-subtitle">8 个本地镜像包的 headless 启动验证 · 记录启动里程碑，而非完整游玩认证</p>
+      <div class="milestone-bar fade-in-up">
+        <div class="milestone">
+          <span class="ms-num">300</span>
+          <span class="ms-label" data-i18n="ms-300">开机画面</span>
+        </div>
+        <div class="ms-line"></div>
+        <div class="milestone">
+          <span class="ms-num">900</span>
+          <span class="ms-label" data-i18n="ms-900">CD 识别 / TOC</span>
+        </div>
+        <div class="ms-line"></div>
+        <div class="milestone">
+          <span class="ms-num">1600</span>
+          <span class="ms-label" data-i18n="ms-1600">游戏加载画面</span>
+        </div>
+        <div class="ms-line"></div>
+        <div class="milestone">
+          <span class="ms-num">3600</span>
+          <span class="ms-label" data-i18n="ms-3600">开场动画</span>
+        </div>
+      </div>
+      <div id="gallery-dynamic" class="fade-in-up"></div>
+      <p class="gallery-note fade-in-up" data-i18n="gallery-note">固件与游戏数据从不随模拟器分发；以上结果仅来自合法转储的本地镜像。</p>
+      <a class="gallery-more fade-in-up" href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Game-Compatibility.md" target="_blank" rel="noopener" data-i18n="gallery-more">查看完整兼容性列表 →</a>
+    </div>
+  </section>
+
+  <!-- ====== ARCHITECTURE ====== -->
+  <section id="architecture" class="section">
+    <div class="container">
+      <h2 class="section-title fade-in-up" data-i18n="arch-title">技术架构</h2>
+      <p class="section-subtitle fade-in-up" data-i18n="arch-subtitle">平台无关的核心引擎，薄前端适配层，边界清晰</p>
+      <div class="arch-diagram fade-in-up">
+        <div class="arch-layer arch-frontend">
+          <div class="arch-label" data-i18n="arch-frontends">前端适配</div>
+          <div class="arch-boxes">
+            <div class="arch-box">
+              <strong>hyperscanemu</strong>
+              <small data-i18n="arch-standalone-sub">CLI / 窗口 / 音频<br>headless 驱动</small>
+            </div>
+            <div class="arch-box">
+              <strong>hyperscanemu-libretro</strong>
+              <small data-i18n="arch-libretro-sub">libretro C ABI<br>RetroArch 核心</small>
+            </div>
+          </div>
+        </div>
+        <div class="arch-connector">
+          <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M20 0 L20 20 L50 40" stroke="#E8553A" stroke-width="2" fill="none"/>
+            <path d="M80 0 L80 20 L50 40" stroke="#E8553A" stroke-width="2" fill="none"/>
+          </svg>
+        </div>
+        <div class="arch-layer arch-mid">
+          <div class="arch-label" data-i18n="arch-media">介质层</div>
+          <div class="arch-boxes">
+            <div class="arch-box mid-box">
+              <strong>hyperscanemu-media</strong>
+              <small data-i18n="arch-media-sub">严格 BIN / CUE / ZIP 解析<br>ISO/UDF 校验 · 路径安全</small>
+            </div>
+          </div>
+        </div>
+        <div class="arch-connector">
+          <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M50 0 L50 40" stroke="#4FD1C5" stroke-width="2" fill="none" stroke-dasharray="4,4"/>
+          </svg>
+        </div>
+        <div class="arch-layer arch-core">
+          <div class="arch-label" data-i18n="arch-core">核心引擎</div>
+          <div class="arch-boxes">
+            <div class="arch-box core-box">
+              <strong>hyperscanemu-core</strong>
+              <small data-i18n="arch-core-sub">平台无关的客体可见状态</small>
+              <div class="core-modules">
+                <span>S+Core 7</span>
+                <span>SPG290 Bus</span>
+                <span>PPU / TVE</span>
+                <span>CD Servo</span>
+                <span>I²C / GPIO</span>
+                <span>RFID</span>
+                <span>DAC Audio</span>
+                <span>IRQ / Timers</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="arch-principles fade-in-up">
+        <div class="principle">
+          <h4 data-i18n="principle-1-title">证据驱动</h4>
+          <p data-i18n="principle-1-desc">行为以固件痕迹、寄存器手册与单元测试锁定，而不是猜测。</p>
+        </div>
+        <div class="principle">
+          <h4 data-i18n="principle-2-title">确定性</h4>
+          <p data-i18n="principle-2-desc">外设时间由模拟 CPU 周期推进，不依赖主机墙钟，可复现回归。</p>
+        </div>
+        <div class="principle">
+          <h4 data-i18n="principle-3-title">结构化失败</h4>
+          <p data-i18n="principle-3-desc">未知指令 / MMIO 带 PC 与地址精确中止，方便诊断而非静默吞掉。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== QUICK START ====== -->
+  <section id="quickstart" class="section section-dark">
+    <div class="container">
+      <h2 class="section-title fade-in-up" data-i18n="qs-title">快速开始</h2>
+      <p class="section-subtitle fade-in-up" data-i18n="qs-subtitle">需要自备合法固件与游戏镜像 · 仓库从不分发受版权保护的数据</p>
+      <div class="quickstart-grid">
+        <div class="quickstart-card fade-in-up">
+          <div class="qs-header">
+            <span class="qs-icon">🖥️</span>
+            <h3 data-i18n="qs-standalone">Standalone</h3>
+          </div>
+          <div class="qs-steps">
+            <div class="qs-step">
+              <span class="qs-num">1</span>
+              <div>
+                <p data-i18n="qs-standalone-1">编译或下载发布版</p>
+                <code>cargo build -p hyperscanemu --release</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">2</span>
+              <div>
+                <p data-i18n="qs-standalone-2">准备固件与镜像</p>
+                <code>spg290.bin · hyperscan.bin · game.cue</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">3</span>
+              <div>
+                <p data-i18n="qs-standalone-3">启动游戏</p>
+                <code>hyperscan-emu play spg290.bin hyperscan.bin game.cue</code>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="quickstart-card fade-in-up">
+          <div class="qs-header">
+            <span class="qs-icon">🎮</span>
+            <h3>RetroArch</h3>
+          </div>
+          <div class="qs-steps">
+            <div class="qs-step">
+              <span class="qs-num">1</span>
+              <div>
+                <p data-i18n="qs-retro-1">安装 libretro 核心</p>
+                <code data-i18n="qs-retro-1-sub">重命名为 hyperscanemu_libretro.&lt;ext&gt;</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">2</span>
+              <div>
+                <p data-i18n="qs-retro-2">放置固件到 system 目录</p>
+                <code>spg290.bin (32 KiB) · hyperscan.bin (1 MiB)</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">3</span>
+              <div>
+                <p data-i18n="qs-retro-3">加载核心与内容</p>
+                <code>Load Core → HyperScanEmu → Load Content</code>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="quickstart-card fade-in-up">
+          <div class="qs-header">
+            <span class="qs-icon">🔧</span>
+            <h3 data-i18n="qs-diag">诊断 CLI</h3>
+          </div>
+          <div class="qs-steps">
+            <div class="qs-step">
+              <span class="qs-num">1</span>
+              <div>
+                <p data-i18n="qs-diag-1">校验镜像包</p>
+                <code>inspect-disc media.zip</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">2</span>
+              <div>
+                <p data-i18n="qs-diag-2">指令级追踪</p>
+                <code>trace spg290.bin hyperscan.bin 200000</code>
+              </div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">3</span>
+              <div>
+                <p data-i18n="qs-diag-3">无头帧捕获</p>
+                <code>run spg290.bin hyperscan.bin media 5000 frame.ppm</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== FOOTER ====== -->
+  <footer id="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <span class="nav-logo-mark" aria-hidden="true">HS</span>
+          <span class="footer-name">HyperScanEmu</span>
+          <p data-i18n="footer-desc">用 Rust 编写的 Mattel HyperScan 模拟器 · SPG290 低级仿真</p>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="footer-project">项目</h4>
+          <a href="https://github.com/AloysHF/HyperScanEmu" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/actions" target="_blank" rel="noopener">CI</a>
+          <a href="https://discord.gg/7XDdSrYD" target="_blank" rel="noopener">Discord</a>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="footer-docs">文档</h4>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Architecture.md" target="_blank" rel="noopener" data-i18n="footer-arch">架构</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Hardware.md" target="_blank" rel="noopener" data-i18n="footer-hw">硬件</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Game-Compatibility.md" target="_blank" rel="noopener" data-i18n="footer-compat">兼容性</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/CONTRIBUTING.md" target="_blank" rel="noopener" data-i18n="footer-contributing">贡献指南</a>
+        </div>
+        <div class="footer-links">
+          <h4 data-i18n="footer-platforms">平台</h4>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Standalone-Emulator.md" target="_blank" rel="noopener">Standalone</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/RetroArch-Core.md" target="_blank" rel="noopener">RetroArch</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/Android-Libretro-Core.md" target="_blank" rel="noopener">Android</a>
+          <a href="https://github.com/AloysHF/HyperScanEmu/blob/master/docs/iOS-Libretro-Core.md" target="_blank" rel="noopener">iOS</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p data-i18n="footer-copy">BSD 3-Clause License © 2025–2026 Aloys. Built with Rust.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
 </body>
 </html>
