@@ -14,8 +14,8 @@
 
 HyperScanEmu is an evidence-driven, clean-room Rust emulator for the Mattel
 HyperScan. It boots the retail BIOS and reaches a retail game's loading screen
-and opening animation with real media attached. Retail gameplay is not yet
-validated.
+with real media attached. Opening animation, title/menu, and retail gameplay are
+not yet validated.
 
 The HyperScan is a 2006 Mattel home console built around the Sunplus SPG290
 SoC (S+Core 7 CPU). Games ship on CD with optional RFID save cards. The

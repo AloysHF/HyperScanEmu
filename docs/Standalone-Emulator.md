@@ -107,8 +107,8 @@ Optional environment variables:
 ## Current compatibility
 
 The standalone frontend and shared core have been validated through a retail
-loading screen and opening animation. Title/menu and gameplay compatibility are
-not yet claimed; CD seek/subcode fidelity and additional CPU/device behavior
+game loading screen. Opening animation, title/menu, and gameplay compatibility
+are not yet claimed; CD seek/subcode fidelity and additional CPU/device behavior
 remain under development. Audio transport is functional for the DAC ring-buffer
 path; the hardware synthesizer is not implemented.
 
