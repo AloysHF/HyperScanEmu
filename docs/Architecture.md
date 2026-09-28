@@ -40,8 +40,11 @@ resolution, ZIP decompression and host files remain outside the device model.
 
 | Area | Document |
 |---|---|
-| S+Core 7 interpreter | [Cpu](Cpu.md) |
-| SPG290 MMIO and peripherals | [Mmio](Mmio.md) |
-| DAC ring-buffer audio | [Audio](Audio.md) |
+| S+Core 7 CPU, SPG290 MMIO, DAC audio | [Hardware](Hardware.md) |
 | Disc and card formats | [Game File Formats](Game-File-Formats.md) |
-| Boot evidence | [Boot Validation](Boot-Validation.md) |
+| Title progress and boot milestones | [Game Compatibility](Game-Compatibility.md) |
+| Standalone CLI and controls | [Standalone Emulator](Standalone-Emulator.md) |
+| RetroArch install and features | [RetroArch Core](RetroArch-Core.md) |
+| Mobile and TV libretro targets | [Android](Android-Libretro-Core.md), [iOS](iOS-Libretro-Core.md) |
+| Release checklist | [Release Process](Release-Process.md) |
+| Contributor workflow | [Contributing](CONTRIBUTING.md) |

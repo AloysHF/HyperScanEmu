@@ -57,7 +57,8 @@ hyperscan.bin  1048576 bytes
 ```
 
 See the [RetroArch Core](docs/RetroArch-Core.md) guide for installation,
-loading content, and current limitations.
+loading content, and current limitations. Mobile and TV targets:
+[Android](docs/Android-Libretro-Core.md), [iOS](docs/iOS-Libretro-Core.md).
 
 ### Diagnostic CLI
 
@@ -98,9 +99,9 @@ crates/
 └── hyperscanemu-libretro/  # libretro ABI boundary
 ```
 
-Details: [Architecture](docs/Architecture.md), [CPU](docs/Cpu.md),
-[MMIO](docs/Mmio.md), [Audio](docs/Audio.md),
-[Game File Formats](docs/Game-File-Formats.md).
+Details: [Architecture](docs/Architecture.md), [Hardware](docs/Hardware.md),
+[Game File Formats](docs/Game-File-Formats.md),
+[Game Compatibility](docs/Game-Compatibility.md).
 
 ## Testing
 
@@ -110,8 +111,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-Firmware and game media are not included and cannot run in CI. Local boot
-evidence is documented in [Boot Validation](docs/Boot-Validation.md).
+Firmware and game media are not included and cannot run in CI. Boot milestones
+and title progress are tracked in [Game Compatibility](docs/Game-Compatibility.md).
 
 Validate media without firmware:
 

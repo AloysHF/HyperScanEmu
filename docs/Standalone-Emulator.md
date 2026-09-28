@@ -112,4 +112,5 @@ not yet claimed; CD seek/subcode fidelity and additional CPU/device behavior
 remain under development. Audio transport is functional for the DAC ring-buffer
 path; the hardware synthesizer is not implemented.
 
-See [Boot Validation](Boot-Validation.md) for the current reference runs.
+See [Game Compatibility](Game-Compatibility.md) for the title progress matrix
+and recorded reference runs.

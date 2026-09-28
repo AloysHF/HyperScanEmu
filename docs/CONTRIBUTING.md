@@ -29,13 +29,15 @@ cargo test --workspace
 - **S+Core 7 CPU** — custom-engine, debug, interrupt, and cycle-accurate timing
 - **SPG290 peripherals** — SPU synthesis, timer modes, IRQ priority conformance
 - **CD fidelity** — EDC/ECC, multi-track CUE, seek timing, subcode CRC
-- **Game compatibility testing** — report boot progress with frame fingerprints or screenshots
+- **Game compatibility testing** — report boot progress with frame fingerprints or screenshots (`scripts/batch-screenshots.ps1` can capture the local ZIP corpus)
 - **libretro integration** — save states, memory maps, card persistence
 - **Documentation** — improve docs and code comments
 - **Bug reports** — include firmware/media hashes and a deterministic `run`/`trace` command when possible
 
 ## Getting Started
 
-Read [Architecture](Architecture.md) first, then pick a device or CPU gap from
-[Boot Validation](Boot-Validation.md). Firmware and media are not distributed;
-use legally obtained dumps locally and keep them out of the repository.
+Read [Architecture](Architecture.md) and [Hardware](Hardware.md) first, then
+pick a device or CPU gap from [Game Compatibility](Game-Compatibility.md).
+For shipping a version, see [Release Process](Release-Process.md). Firmware and
+media are not distributed; use legally obtained dumps locally and keep them out
+of the repository.
