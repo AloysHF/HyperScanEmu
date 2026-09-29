@@ -11,7 +11,7 @@ hardware and media you own.
 
 ```bash
 cargo build -p hyperscanemu --release
-target/release/hyperscan-emu play spg290.bin hyperscan.bin game.cue
+target/release/hyperscan-emu game.cue --internal-rom spg290.bin --bios hyperscan.bin
 ```
 
 BIN, single-track CUE, and ZIP disc packages are accepted. The firmware loader
@@ -20,20 +20,50 @@ requires a 32 KiB SPG290 internal ROM and a 1 MiB HyperScan BIOS.
 ## Synopsis
 
 ```text
-hyperscan-emu play [OPTIONS] <INTERNAL_ROM> <BIOS> <MEDIA>
+hyperscan-emu [OPTIONS] [MEDIA]
+```
+
+There are no subcommands. With a media path, firmware flags, and no
+`--headless`/`--screenshot`/`--output`, the windowed emulator opens. This
+matches the sibling desktop frontends (Playdia, Dingoo, SPMP, Native32).
+
+Examples:
+
+```bash
+# Windowed play
+hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin
+hyperscan-emu game.cue --internal-rom spg290.bin --bios hyperscan.bin --scale 2 --fullscreen
+
+# Validate media only
+hyperscan-emu game.zip --inspect
+
+# Instruction trace (firmware only)
+hyperscan-emu -r spg290.bin -b hyperscan.bin --trace 200000
+
+# Headless run + PPM
+hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin --headless --frames 300 --output frame.ppm
+
+# Headless PNG screenshot
+hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin -S startup.png --screenshot-frames 300
 ```
 
 ## Options
 
 | Option | Default | Description |
 |---|---:|---|
+| `<MEDIA>` | — | Path to BIN, CUE, or ZIP game media. |
+| `-r, --internal-rom <PATH>` | — | Path to the 32 KiB SPG290 internal ROM. |
+| `-b, --bios <PATH>` | — | Path to the 1 MiB HyperScan BIOS. |
 | `-s, --scale <1-8>` | `1` | Initial integer window scale. |
 | `-f, --fullscreen` | off | Open a borderless desktop-sized window. |
 | `-v, --volume <0-100>` | `100` | Host audio volume; zero disables audio. |
+| `--inspect` | off | Validate the media package and exit (no firmware needed). |
+| `--trace <STEPS>` | off | Execute a bounded instruction trace (no media needed). |
 | `--headless` | off | Run without a window or audio device. |
 | `--frames <N>` | `60` | Frame count used with `--headless`. |
 | `-S, --screenshot <PATH>` | none | Run headlessly, save a PNG, and exit. |
 | `--screenshot-frames <N>` | `300` | Frame count used before a PNG capture. |
+| `--output <PATH>` | none | Write the final headless frame as a binary PPM. |
 
 The window can be resized at runtime. The source framebuffer retains its 4:3
 aspect ratio and is centered by the host window system. The title bar reports
@@ -71,7 +101,7 @@ measured frontend FPS once per second.
 ## Headless PNG capture
 
 ```bash
-hyperscan-emu play spg290.bin hyperscan.bin game.zip \
+hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin \
   --screenshot startup.png --screenshot-frames 300
 ```
 
@@ -85,23 +115,24 @@ The same binary supports deterministic workflows that stay free of window, input
 and audio-device dependencies:
 
 ```text
-hyperscanemu inspect-disc <media.bin|media.cue|media.zip>
-hyperscanemu trace <internal-rom.bin> <bios.bin> [steps]
-hyperscanemu run <internal-rom.bin> <bios.bin> <media> [frames] [frame.ppm]
+hyperscan-emu <media.bin|media.cue|media.zip> --inspect
+hyperscan-emu -r <internal-rom.bin> -b <bios.bin> --trace <steps>
+hyperscan-emu <media> -r <internal-rom.bin> -b <bios.bin> \
+  --headless --frames <N> [--output frame.ppm] [-S frame.png]
 ```
 
-- `inspect-disc` validates BIN/CUE/ZIP structure without firmware.
-- `trace` executes a bounded instruction count and reports the final PC or the
+- `--inspect` validates BIN/CUE/ZIP structure without firmware.
+- `--trace` executes a bounded instruction count and reports the final PC or the
   structured stop reason (unknown instruction or MMIO).
-- `run` executes complete video frames and prints the final geometry, framebuffer
-  fingerprint, program counter and key video state. If the final path is supplied,
-  it also writes a binary PPM screenshot.
+- Headless mode executes complete video frames and prints the final geometry,
+  framebuffer fingerprint, program counter, UART output, and key video state.
+  `--output` writes a binary PPM; `-S` writes a PNG.
 
 Optional environment variables:
 
 | Variable | Effect |
 |---|---|
-| `HYPERSCANEMU_FRAME_TRACE_INTERVAL` | Print frame state every N frames during `run`. |
+| `HYPERSCANEMU_FRAME_TRACE_INTERVAL` | Print frame state every N frames during headless runs. |
 | `HYPERSCANEMU_TRACE_CD_SUBCODE` | Include CD subcode details in the CD command trace. |
 
 ## Current compatibility

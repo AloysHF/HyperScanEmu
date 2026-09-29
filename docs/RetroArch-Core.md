@@ -72,7 +72,7 @@ Media validation rules are documented in [Game File Formats](Game-File-Formats.m
 Validate packages without firmware first:
 
 ```bash
-cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
+cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
 ```
 
 ## Supported features

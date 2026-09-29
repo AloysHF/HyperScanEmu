@@ -3,7 +3,7 @@
     Batch-generate screenshots for all ZIP disc packages in tmp/hyperscan_game.
 
 .DESCRIPTION
-    Runs hyperscan-emu play in screenshot mode (-S/--screenshot) for every .zip
+    Runs hyperscan-emu in screenshot mode (-S/--screenshot) for every .zip
     file found under tmp/hyperscan_game. Output PNGs are saved to docs/images/,
     named after the game file (without extension). Firmware (SPG290 internal ROM
     and HyperScan BIOS) is never bundled; pass paths or use the local tmp defaults.
@@ -178,15 +178,16 @@ foreach ($game in $games) {
     $ErrorActionPreference = "Continue"
     try {
         # Cheap media check first so invalid packages fail fast.
-        $inspect = & $Binary inspect-disc $game.FullName 2>&1
+        $inspect = & $Binary $game.FullName --inspect 2>&1
         $inspectCode = $LASTEXITCODE
         if ($inspectCode -ne 0) {
-            Write-Host "SKIP (inspect-disc exit $inspectCode)" -ForegroundColor Yellow
+            Write-Host "SKIP (inspect exit $inspectCode)" -ForegroundColor Yellow
             $skipped++
             continue
         }
 
-        $output = & $Binary play $InternalRom $Bios $game.FullName `
+        $output = & $Binary $game.FullName `
+            --internal-rom $InternalRom --bios $Bios `
             --screenshot $outPath --screenshot-frames $captureFrames 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {

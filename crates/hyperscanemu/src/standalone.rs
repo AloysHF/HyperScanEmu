@@ -23,12 +23,21 @@ pub(crate) fn run(options: PlayOptions) -> Result<()> {
     let mut emulator = Emulator::new(firmware);
     emulator.attach_disc(disc);
 
-    if options.headless || options.screenshot.is_some() {
+    if options.headless || options.screenshot.is_some() || options.output.is_some() {
         let frames = options
             .screenshot
             .as_ref()
             .map_or(options.frames, |_| options.screenshot_frames);
         run_frames(&mut emulator, frames)?;
+        if let Some(path) = &options.output {
+            let (width, height) = emulator.display_size();
+            let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+            for pixel in emulator.framebuffer() {
+                ppm.extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, *pixel as u8]);
+            }
+            fs::write(path, ppm).with_context(|| format!("failed to write {}", path.display()))?;
+            println!("wrote frame to {}", path.display());
+        }
         if let Some(path) = options.screenshot {
             save_png(&path, &emulator)?;
             println!("wrote screenshot to {}", path.display());
@@ -149,7 +158,7 @@ fn run_window(mut emulator: Emulator, options: &PlayOptions) -> Result<()> {
     Ok(())
 }
 
-fn save_png(path: &Path, emulator: &Emulator) -> Result<()> {
+pub(crate) fn save_png(path: &Path, emulator: &Emulator) -> Result<()> {
     let (width, height) = emulator.display_size();
     let mut rgb = Vec::with_capacity(width * height * 3);
     for pixel in emulator.framebuffer() {

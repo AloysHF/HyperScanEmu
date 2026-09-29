@@ -32,7 +32,7 @@ binary file as supported media.
 Validate media without firmware:
 
 ```bash
-cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
+cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
 ```
 
 ## Card images

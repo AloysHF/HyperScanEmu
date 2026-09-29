@@ -11,38 +11,85 @@ mod cli;
 mod input;
 mod standalone;
 
-use cli::{Cli, Command};
+use cli::{Cli, PlayOptions};
 
 fn main() -> Result<()> {
-    match Cli::parse().command {
-        Command::InspectDisc { media } => {
-            let disc = load_disc(&media)?;
-            println!(
-                "validated MODE1/2352 image: {} sectors, fingerprint {:016x}",
-                disc.sector_count(),
-                disc.fingerprint()
-            );
-        }
-        Command::Trace {
-            internal_rom,
-            bios,
-            steps,
-        } => trace(&internal_rom, &bios, steps)?,
-        Command::Run {
+    let args = Cli::parse();
+
+    if args.inspect {
+        let media = args
+            .media
+            .as_deref()
+            .context("--inspect requires a media path (BIN, CUE, or ZIP)")?;
+        inspect_disc(media)?;
+        return Ok(());
+    }
+
+    if let Some(steps) = args.trace {
+        let internal_rom = args
+            .internal_rom
+            .as_deref()
+            .context("--trace requires --internal-rom <PATH>")?;
+        let bios = args
+            .bios
+            .as_deref()
+            .context("--trace requires --bios <PATH>")?;
+        trace(internal_rom, bios, steps)?;
+        return Ok(());
+    }
+
+    let media = args
+        .media
+        .as_deref()
+        .context("provide a media path (BIN, CUE, or ZIP)")?;
+    let internal_rom = args
+        .internal_rom
+        .as_deref()
+        .context("provide --internal-rom <PATH> (32 KiB SPG290 internal ROM)")?;
+    let bios = args
+        .bios
+        .as_deref()
+        .context("provide --bios <PATH> (1 MiB HyperScan BIOS)")?;
+
+    if args.headless || args.screenshot.is_some() || args.output.is_some() {
+        let frames = args
+            .screenshot
+            .as_ref()
+            .map_or(args.frames, |_| args.screenshot_frames);
+        run_headless(
             internal_rom,
             bios,
             media,
             frames,
-            output,
-        } => run_headless(
-            &internal_rom,
-            &bios,
-            &media,
-            frames.unwrap_or(1),
-            output.as_deref(),
-        )?,
-        Command::Play(options) => standalone::run(options)?,
+            args.output.as_deref(),
+            args.screenshot.as_deref(),
+        )?;
+        return Ok(());
     }
+
+    let options = PlayOptions {
+        internal_rom: internal_rom.to_path_buf(),
+        bios: bios.to_path_buf(),
+        media: media.to_path_buf(),
+        scale: args.scale,
+        fullscreen: args.fullscreen,
+        volume: args.volume,
+        headless: false,
+        frames: args.frames,
+        screenshot: args.screenshot.clone(),
+        screenshot_frames: args.screenshot_frames,
+        output: args.output.clone(),
+    };
+    standalone::run(options)
+}
+
+fn inspect_disc(media: &Path) -> Result<()> {
+    let disc = load_disc(media)?;
+    println!(
+        "validated MODE1/2352 image: {} sectors, fingerprint {:016x}",
+        disc.sector_count(),
+        disc.fingerprint()
+    );
     Ok(())
 }
 
@@ -52,6 +99,7 @@ fn run_headless(
     media: &Path,
     frames: u64,
     output: Option<&Path>,
+    screenshot: Option<&Path>,
 ) -> Result<()> {
     let firmware = load_firmware(internal_rom, bios)?;
     let disc = load_disc(media)?;
@@ -83,6 +131,10 @@ fn run_headless(
         fs::write(path, encode_ppm(emulator.framebuffer(), width, height))
             .with_context(|| format!("failed to write {}", path.display()))?;
         println!("wrote frame to {}", path.display());
+    }
+    if let Some(path) = screenshot {
+        standalone::save_png(path, &emulator)?;
+        println!("wrote screenshot to {}", path.display());
     }
     Ok(())
 }

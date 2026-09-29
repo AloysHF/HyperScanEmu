@@ -5,7 +5,7 @@ use 120-byte RFID save cards. Firmware and media are never distributed with the
 emulator; results below are from legally dumped local images only.
 
 Each package was tested by running `scripts/batch-screenshots.ps1` (headless
-`play --screenshot`) for **1800 frames** and classifying the captured PNG. This
+`--screenshot`) for **1800 frames** and classifying the captured PNG. This
 matrix records **boot progress**, not full gameplay certification. Title, menu,
 input, and gameplay behavior are not yet claimed.
 
@@ -38,7 +38,7 @@ Capture reference (approximate):
 
 | Area | Status | Notes |
 |---|---|---|
-| BIOS boot path | ✅ | All eight packages completed `inspect-disc` and headless boot |
+| BIOS boot path | ✅ | All eight packages completed `--inspect` and headless boot |
 | CD identify / TOC | ✅ | Deterministic analog feedback completes focus and tracking |
 | Retail loading screens | ✅ | Ben 10, Marvel Heroes, Spider-Man, X-Men (USE revisions) |
 | Opening animation | — | Not captured in this batch |
@@ -49,7 +49,7 @@ Capture reference (approximate):
 
 ## Game List
 
-Screenshots are the 1800-frame `play --screenshot` output (`docs/images/`).
+Screenshots are the 1800-frame `--screenshot` output (`docs/images/`).
 `USE` / `USE2` are distinct local revisions of the same title.
 
 | # | Game | 中文名称 | File | Screenshot | Status |
@@ -75,8 +75,9 @@ Screenshots are the 1800-frame `play --screenshot` output (`docs/images/`).
 
 ## Reporting results
 
-1. Run `inspect-disc` on the package and keep the output.
-2. Capture boot progress with `run` (optional PPM) or `play --screenshot`.
+1. Run `--inspect` on the package and keep the output.
+2. Capture boot progress with headless `--frames`/`--output` (optional PPM) or
+   `--screenshot`.
    For a full local corpus of ZIP packages under `tmp/hyperscan_game`, use
    `scripts/batch-screenshots.ps1` to write PNGs into `docs/images/`.
 3. Record the milestone reached, geometry, and any structured stop reason.
@@ -86,13 +87,13 @@ Screenshots are the 1800-frame `play --screenshot` output (`docs/images/`).
 Example reference commands:
 
 ```text
-hyperscanemu trace <internal-rom.bin> <bios.bin> 15000000
-hyperscanemu run <internal-rom.bin> <bios.bin> <media> 300 frame.ppm
+hyperscanemu -r <internal-rom.bin> -b <bios.bin> --trace 15000000
+hyperscanemu <media> -r <internal-rom.bin> -b <bios.bin> --headless --frames 300 --output frame.ppm
 ```
 
-`run` prints UART, final PC, PPU/TVE controls, layer state, CD command origins
-and servo position. Treat the optional PPM as the visual oracle; framebuffer
-fingerprints alone do not establish rendering correctness.
+Headless runs print UART, final PC, PPU/TVE controls, layer state, CD command
+origins and servo position. Treat the optional PPM as the visual oracle;
+framebuffer fingerprints alone do not establish rendering correctness.
 
 Do not mark gameplay ✅ without a recorded interactive session. See
 [Game File Formats](Game-File-Formats.md) for accepted media shapes.

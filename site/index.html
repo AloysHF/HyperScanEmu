@@ -358,7 +358,7 @@
               <span class="qs-num">3</span>
               <div>
                 <p data-i18n="qs-standalone-3">启动游戏</p>
-                <code>hyperscan-emu play spg290.bin hyperscan.bin game.cue</code>
+                <code>hyperscan-emu game.cue -r spg290.bin -b hyperscan.bin</code>
               </div>
             </div>
           </div>
@@ -402,21 +402,21 @@
               <span class="qs-num">1</span>
               <div>
                 <p data-i18n="qs-diag-1">校验镜像包</p>
-                <code>inspect-disc media.zip</code>
+                <code>hyperscan-emu media.zip --inspect</code>
               </div>
             </div>
             <div class="qs-step">
               <span class="qs-num">2</span>
               <div>
                 <p data-i18n="qs-diag-2">指令级追踪</p>
-                <code>trace spg290.bin hyperscan.bin 200000</code>
+                <code>hyperscan-emu -r spg290.bin -b hyperscan.bin --trace 200000</code>
               </div>
             </div>
             <div class="qs-step">
               <span class="qs-num">3</span>
               <div>
                 <p data-i18n="qs-diag-3">无头帧捕获</p>
-                <code>run spg290.bin hyperscan.bin media 5000 frame.ppm</code>
+                <code>hyperscan-emu media -r spg290.bin -b hyperscan.bin --headless --frames 5000 --output frame.ppm</code>
               </div>
             </div>
           </div>

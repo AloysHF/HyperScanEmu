@@ -33,14 +33,17 @@ selected strategy is low-level emulation of the firmware-visible hardware.
 - **RFID cards** — 120-byte card protocol on GPIO with dirty tracking
 - **Standalone frontend** — resizable window, fullscreen, keyboard gamepads, PNG screenshots
 - **libretro core** — RetroArch integration with firmware from the system directory
-- **Headless diagnostics** — `trace`, `run`, and `inspect-disc` without window or audio devices
+- **Headless diagnostics** — `--inspect`, `--trace`, and headless frame runs without window or audio devices
 
 ## Usage
 
 ### Standalone Mode
 
+There are no subcommands. Pass the media path first, then firmware flags:
+
 ```bash
-cargo run -p hyperscanemu --release -- play spg290.bin hyperscan.bin game.cue
+cargo run -p hyperscanemu --release -- game.cue --internal-rom spg290.bin --bios hyperscan.bin
+cargo run -p hyperscanemu --release -- "game.zip" -r spg290.bin -b hyperscan.bin --scale 2
 ```
 
 See the [Standalone Emulator](docs/Standalone-Emulator.md) guide for options,
@@ -63,9 +66,12 @@ loading content, and current limitations. Mobile and TV targets:
 ### Diagnostic CLI
 
 ```bash
-cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
-cargo run -p hyperscanemu -- trace <internal-rom.bin> <bios.bin> [steps]
-cargo run -p hyperscanemu -- run <internal-rom.bin> <bios.bin> <media> [frames] [frame.ppm]
+cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
+cargo run -p hyperscanemu -- -r <internal-rom.bin> -b <bios.bin> --trace <steps>
+cargo run -p hyperscanemu -- <media> -r <internal-rom.bin> -b <bios.bin> \
+  --headless --frames <N> --output frame.ppm
+cargo run -p hyperscanemu -- <media> -r <internal-rom.bin> -b <bios.bin> \
+  -S startup.png --screenshot-frames 300
 ```
 
 ## Building
@@ -117,7 +123,7 @@ and title progress are tracked in [Game Compatibility](docs/Game-Compatibility.m
 Validate media without firmware:
 
 ```bash
-cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
+cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
 ```
 
 ## Contributing
