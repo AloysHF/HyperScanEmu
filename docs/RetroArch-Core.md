@@ -88,7 +88,6 @@ cargo run -p hyperscanemu -- inspect-disc <media.bin|media.cue|media.zip>
 - No save-state serialization or exposed memory blocks are reported yet.
 - Card image selection and atomic card saving remain frontend work.
 - Retail title/menu and gameplay have not been validated under RetroArch.
-- The core is marked experimental in `hyperscanemu_libretro.info`.
 
 ## Diagnostic frontends
 

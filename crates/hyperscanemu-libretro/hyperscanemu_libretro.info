@@ -27,7 +27,7 @@ load_subsystem = "false"
 hw_render = "false"
 needs_fullpath = "true"
 disk_control = "false"
-is_experimental = "true"
+is_experimental = "false"
 
 # Required firmware (place in the frontend system directory)
 firmware0 = "spg290.bin"

@@ -82,7 +82,7 @@ device and simulator binaries together.
 
 ## Notes
 
-- The core is experimental; retail gameplay is not yet validated on iOS.
+- Retail gameplay is not yet validated on iOS.
 - Prefer a personal or developer signing certificate you control; do not
   redistribute signed IPAs that embed copyrighted firmware or games.
 - Desktop standalone diagnostics are not available on iOS.

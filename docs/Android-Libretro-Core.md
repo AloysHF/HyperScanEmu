@@ -53,7 +53,7 @@ these automatically.
 
 ## Notes
 
-- The core is experimental; retail gameplay is not yet validated on Android.
+- Retail gameplay is not yet validated on Android.
 - Card image selection and atomic card saving remain frontend responsibilities.
 - Headless diagnostics (`inspect-disc`, `trace`, `run`) are desktop standalone
   features and are not part of the Android core.
