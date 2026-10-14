@@ -16,4 +16,4 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.18.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
-minifb = "0.28"
+minifb = "0.29"
