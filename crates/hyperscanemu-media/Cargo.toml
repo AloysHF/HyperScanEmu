@@ -7,4 +7,4 @@ description.workspace = true
 
 [dependencies]
 hyperscanemu-core = { path = "../hyperscanemu-core" }
-zip = { version = "8.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
