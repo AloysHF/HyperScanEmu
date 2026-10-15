@@ -160,7 +160,8 @@ fn load_zip(path: &Path) -> Result<DiscImage, MediaError> {
     let mut cue_indices = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        if extension(Path::new(entry.name())).as_deref() == Some("cue") {
+        let name = entry.name()?;
+        if extension(Path::new(&*name)).as_deref() == Some("cue") {
             cue_indices.push(index);
         }
     }
