@@ -33,6 +33,7 @@ selected strategy is low-level emulation of the firmware-visible hardware.
 - **RFID cards** — 120-byte card protocol on GPIO with dirty tracking
 - **Standalone frontend** — resizable window, fullscreen, keyboard gamepads, PNG screenshots
 - **libretro core** — RetroArch integration with firmware from the system directory
+- **Browser play** — EmulatorJS core compiled to WebAssembly, with a ready-to-use [online player](https://AloysHF.github.io/HyperScanEmu/play.html) that runs firmware and BIN/CUE images without uploading them
 - **Headless diagnostics** — `--inspect`, `--trace`, and headless frame runs without window or audio devices
 
 ## Usage
@@ -62,6 +63,15 @@ hyperscan.bin  1048576 bytes
 See the [RetroArch Core](docs/RetroArch-Core.md) guide for installation,
 loading content, and current limitations. Mobile and TV targets:
 [Android](docs/Android-Libretro-Core.md), [iOS](docs/iOS-Libretro-Core.md).
+
+### Browser (EmulatorJS)
+
+Open <https://AloysHF.github.io/HyperScanEmu/play.html>, pick a firmware ZIP
+containing `spg290.bin` and `hyperscan.bin`, then a `.bin` or CUE/BIN `.zip`
+disc image. Both run locally in the browser through the HyperScanEmu
+WebAssembly core; nothing is uploaded. See the
+[EmulatorJS Core](docs/EmulatorJS-Core.md) guide for embedding the core in your
+own EmulatorJS deployment, bundle contents, firmware placement, and controls.
 
 ### Diagnostic CLI
 
@@ -94,6 +104,22 @@ cargo build -p hyperscanemu-libretro --release
 
 Rename the output to `hyperscanemu_libretro.<ext>` before installing it into
 RetroArch's `cores/` directory. See [RetroArch Core](docs/RetroArch-Core.md).
+
+### EmulatorJS Core (for the browser)
+
+The browser core links the libretro core into EmulatorJS's RetroArch fork. It
+needs an activated emsdk, `p7zip`, and the pinned nightly toolchain:
+
+```bash
+cargo +nightly build -p hyperscanemu-libretro \
+  --target wasm32-unknown-emscripten --profile wasm-release \
+  -Zbuild-std=std,panic_abort
+
+scripts/build-emulatorjs-core.sh
+```
+
+The bundle is written to `out/hyperscan-emu-emulatorjs.zip`. See
+[EmulatorJS Core](docs/EmulatorJS-Core.md) for details.
 
 ## Architecture
 
