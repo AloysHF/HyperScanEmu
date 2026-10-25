@@ -1,6 +1,6 @@
 use std::ffi::{c_char, c_void, CStr};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Mutex;
 
@@ -24,6 +24,10 @@ const JOYPAD_B: u32 = 0;
 const JOYPAD_Y: u32 = 1;
 const JOYPAD_SELECT: u32 = 2;
 const JOYPAD_START: u32 = 3;
+const JOYPAD_UP: u32 = 4;
+const JOYPAD_DOWN: u32 = 5;
+const JOYPAD_LEFT: u32 = 6;
+const JOYPAD_RIGHT: u32 = 7;
 const JOYPAD_A: u32 = 8;
 const JOYPAD_X: u32 = 9;
 const JOYPAD_L: u32 = 10;
@@ -278,15 +282,12 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     let Some(path) = c_path(game.path) else {
         return false;
     };
-    let Some(system_directory) = system_directory() else {
-        return false;
-    };
 
     let result = (|| {
-        let internal = fs::read(system_directory.join("spg290.bin")).ok()?;
-        let bios = fs::read(system_directory.join("hyperscan.bin")).ok()?;
+        let internal = load_firmware("spg290.bin", Some(&path))?;
+        let bios = load_firmware("hyperscan.bin", Some(&path))?;
         let firmware = Firmware::from_parts(&internal, &bios).ok()?;
-        let disc = load_disc(path).ok()?;
+        let disc = load_disc(&path).ok()?;
         let mut emulator = Emulator::new(firmware);
         emulator.attach_disc(disc);
         Some(emulator)
@@ -346,21 +347,46 @@ unsafe fn poll_input(callback: InputStateCallback) -> InputState {
         ] {
             controller.set_button(button, callback(port, RETRO_DEVICE_JOYPAD, 0, id) != 0);
         }
-        controller.analog_x = analog_to_u8(callback(
+        let analog_x = callback(
             port,
             RETRO_DEVICE_ANALOG,
             RETRO_DEVICE_INDEX_ANALOG_LEFT,
             RETRO_DEVICE_ID_ANALOG_X,
-        ));
-        controller.analog_y = analog_to_u8(callback(
+        );
+        let analog_y = callback(
             port,
             RETRO_DEVICE_ANALOG,
             RETRO_DEVICE_INDEX_ANALOG_LEFT,
             RETRO_DEVICE_ID_ANALOG_Y,
-        ));
+        );
+        let left = callback(port, RETRO_DEVICE_JOYPAD, 0, JOYPAD_LEFT) != 0;
+        let right = callback(port, RETRO_DEVICE_JOYPAD, 0, JOYPAD_RIGHT) != 0;
+        let up = callback(port, RETRO_DEVICE_JOYPAD, 0, JOYPAD_UP) != 0;
+        let down = callback(port, RETRO_DEVICE_JOYPAD, 0, JOYPAD_DOWN) != 0;
+        controller.analog_x = if analog_x == 0 {
+            dpad_axis(left, right)
+        } else {
+            analog_to_u8(analog_x)
+        };
+        controller.analog_y = if analog_y == 0 {
+            dpad_axis(up, down)
+        } else {
+            analog_to_u8(analog_y)
+        };
         input.controllers[port as usize] = controller;
     }
     input
+}
+
+/// The HyperScan controller reports analog axes, but keyboards and touch
+/// controls only produce RetroPad directions. Fold a held direction into the
+/// axis when no analog stick is active.
+fn dpad_axis(negative: bool, positive: bool) -> u8 {
+    match (negative, positive) {
+        (true, false) => 0,
+        (false, true) => u8::MAX,
+        _ => 0x7f,
+    }
 }
 
 fn analog_to_u8(value: i16) -> u8 {
@@ -374,6 +400,23 @@ unsafe fn c_path(path: *const c_char) -> Option<PathBuf> {
     Some(PathBuf::from(
         CStr::from_ptr(path).to_string_lossy().as_ref(),
     ))
+}
+
+/// EmulatorJS cannot install firmware into a RetroArch system directory: it
+/// extracts an `EJS_biosUrl` archive beside the content file instead. Look in
+/// the frontend system directory first, then beside the content on Emscripten.
+unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Option<Vec<u8>> {
+    let mut candidates = Vec::new();
+    if let Some(directory) = system_directory() {
+        candidates.push(directory.join(name));
+    }
+    #[cfg(target_os = "emscripten")]
+    if let Some(path) = content {
+        candidates.push(path.parent().unwrap_or_else(|| Path::new("/")).join(name));
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    let _ = content;
+    candidates.into_iter().find_map(|path| fs::read(path).ok())
 }
 
 unsafe fn system_directory() -> Option<PathBuf> {
@@ -403,6 +446,14 @@ mod tests {
         assert_eq!(analog_to_u8(i16::MIN), 0);
         assert_eq!(analog_to_u8(0), 127);
         assert_eq!(analog_to_u8(i16::MAX), 255);
+    }
+
+    #[test]
+    fn dpad_directions_fill_centered_axes() {
+        assert_eq!(dpad_axis(true, false), 0);
+        assert_eq!(dpad_axis(false, true), u8::MAX);
+        assert_eq!(dpad_axis(false, false), 0x7f);
+        assert_eq!(dpad_axis(true, true), 0x7f);
     }
 
     #[test]

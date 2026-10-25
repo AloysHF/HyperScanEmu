@@ -7,7 +7,9 @@ description.workspace = true
 
 [lib]
 name = "hyperscanemu"
-crate-type = ["cdylib"]
+# `staticlib` is only used by the EmulatorJS build, which links the core into
+# the wasm frontend; native builds keep producing the cdylib.
+crate-type = ["cdylib", "staticlib"]
 path = "src/lib.rs"
 
 [dependencies]

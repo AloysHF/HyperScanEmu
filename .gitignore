@@ -7,3 +7,5 @@ CLAUDE.md
 .codegraph/
 .workbuddy/
 
+out/
+site/data/

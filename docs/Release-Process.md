@@ -60,7 +60,9 @@ The workflow:
    `hyperscanemu_libretro.info`
 3. Builds Android (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), iOS (universal
    device dylib + arm64 simulator), and webOS (armv7) libretro cores
-4. Creates a **draft** GitHub Release with generated notes and a download table
+4. Builds the EmulatorJS core for the browser as WebAssembly, packaged as
+   `hyperscan-emu-emulatorjs.zip` with the WebGL2 and legacy `.data` bundles
+5. Creates a **draft** GitHub Release with generated notes and a download table
 
 ### 5. Review and publish
 
@@ -73,6 +75,7 @@ The workflow:
    - `hyperscan-emu-android-libretro.tar.gz`
    - `hyperscan-emu-ios-libretro.tar.gz`
    - `hyperscan-emu-webos-libretro.tar.gz`
+   - `hyperscan-emu-emulatorjs.zip`
 4. Publish the release
 
 Never attach firmware, game media, or card dumps.
