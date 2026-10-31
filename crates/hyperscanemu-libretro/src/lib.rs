@@ -302,7 +302,7 @@ pub unsafe extern "C" fn retro_get_system_info(info: *mut RetroSystemInfo) {
         };
         *info = RetroSystemInfo {
             library_name: c"HyperScanEmu".as_ptr(),
-            library_version: c"0.1.0".as_ptr(),
+            library_version: concat!(env!("CARGO_PKG_VERSION"), " ").as_ptr().cast(),
             valid_extensions: c"bin|cue|zip".as_ptr(),
             need_fullpath: true,
             block_extract: false,
