@@ -9,6 +9,7 @@ mod emulator;
 mod error;
 mod firmware;
 mod input;
+mod state;
 mod uart;
 mod video;
 

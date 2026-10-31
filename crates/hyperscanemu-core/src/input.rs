@@ -79,6 +79,46 @@ pub struct InputState {
     pub controllers: [ControllerState; 2],
 }
 
+impl ControllerState {
+    pub(crate) const STATE_SIZE: usize = 2 + 1 + 1;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u16(self.buttons);
+        writer.u8(self.analog_x);
+        writer.u8(self.analog_y);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        self.buttons = reader.u16()?;
+        self.analog_x = reader.u8()?;
+        self.analog_y = reader.u8()?;
+        Ok(())
+    }
+}
+
+impl InputState {
+    pub(crate) const STATE_SIZE: usize = 2 * ControllerState::STATE_SIZE;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        for controller in &self.controllers {
+            controller.save_state(writer);
+        }
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        for controller in &mut self.controllers {
+            controller.load_state(reader)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

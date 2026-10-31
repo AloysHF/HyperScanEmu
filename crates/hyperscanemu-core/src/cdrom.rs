@@ -430,6 +430,137 @@ fn binary_to_bcd(value: u32) -> u8 {
     (((value / 10) << 4) | (value % 10)) as u8
 }
 
+impl CdDmaRequest {
+    pub(crate) const STATE_SIZE: usize = 5 * 4;
+
+    fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.lba);
+        writer.u32(self.buffer_start);
+        writer.u32(self.buffer_end);
+        writer.u32(self.buffer_pointer);
+        writer.u32(self.sector_size as u32);
+    }
+
+    fn load_state(reader: &mut crate::state::StateReader) -> Result<Self, crate::EmulatorError> {
+        Ok(Self {
+            lba: reader.u32()?,
+            buffer_start: reader.u32()?,
+            buffer_end: reader.u32()?,
+            buffer_pointer: reader.u32()?,
+            sector_size: reader.u32()? as usize,
+        })
+    }
+}
+
+impl CdServo {
+    /// The diagnostic command trace is rebuilt while the disc runs, so it is
+    /// not part of the state.
+    pub(crate) const STATE_SIZE: usize = 6 * 4
+        + 4
+        + 4 * 4
+        + 1
+        + 3 * 4
+        + 2
+        + 16 * 4
+        + 0x1_0000 * 4
+        + 1
+        + 4
+        + 2 * 4
+        + 8
+        + 1
+        + CdDmaRequest::STATE_SIZE
+        + 4
+        + 2 * 4;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.system_control);
+        writer.u32(self.address);
+        writer.u32(self.data);
+        writer.u32(self.buffer_start);
+        writer.u32(self.buffer_end);
+        writer.u32(self.buffer_pointer);
+        writer.u8(self.speed);
+        writer.u8(self.seek_minute);
+        writer.u8(self.seek_second);
+        writer.u8(self.seek_frame);
+        writer.u32(self.seek_lba);
+        writer.u32(self.sector_size);
+        writer.u32(self.dma_control);
+        writer.u32(self.dsp_data);
+        writer.bool(self.frame_found);
+        writer.u32(self.control0);
+        writer.u32(self.control1);
+        writer.u32(self.auxiliary_control);
+        writer.u16(self.skip);
+        writer.u32_slots(&self.dsp_registers, 16);
+        writer.u32_slots(&self.dsp_memory, 0x1_0000);
+        writer.bool(self.disc_sectors.is_some());
+        writer.u32(self.disc_sectors.unwrap_or(0));
+        writer.u32(self.current_sector);
+        writer.u32(self.total_sectors);
+        writer.u64(self.phase);
+        writer.bool(self.pending_dma.is_some());
+        match self.pending_dma {
+            Some(request) => request.save_state(writer),
+            None => CdDmaRequest {
+                lba: 0,
+                buffer_start: 0,
+                buffer_end: 0,
+                buffer_pointer: 0,
+                sector_size: 0,
+            }
+            .save_state(writer),
+        }
+        writer.u32(self.noise);
+        writer.u32(self.execution_pc);
+        writer.u32(self.execution_link);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        self.system_control = reader.u32()?;
+        self.address = reader.u32()?;
+        self.data = reader.u32()?;
+        self.buffer_start = reader.u32()?;
+        self.buffer_end = reader.u32()?;
+        self.buffer_pointer = reader.u32()?;
+        self.speed = reader.u8()?;
+        self.seek_minute = reader.u8()?;
+        self.seek_second = reader.u8()?;
+        self.seek_frame = reader.u8()?;
+        self.seek_lba = reader.u32()?;
+        self.sector_size = reader.u32()?;
+        self.dma_control = reader.u32()?;
+        self.dsp_data = reader.u32()?;
+        self.frame_found = reader.bool()?;
+        self.control0 = reader.u32()?;
+        self.control1 = reader.u32()?;
+        self.auxiliary_control = reader.u32()?;
+        self.skip = reader.u16()?;
+        for (value, stored) in self.dsp_registers.iter_mut().zip(reader.u32_slots(16)?) {
+            *value = stored;
+        }
+        for (value, stored) in self.dsp_memory.iter_mut().zip(reader.u32_slots(0x1_0000)?) {
+            *value = stored;
+        }
+        let has_disc = reader.bool()?;
+        let disc_sectors = reader.u32()?;
+        self.disc_sectors = has_disc.then_some(disc_sectors);
+        self.current_sector = reader.u32()?;
+        self.total_sectors = reader.u32()?;
+        self.phase = reader.u64()?;
+        let pending = reader.bool()?;
+        let request = CdDmaRequest::load_state(reader)?;
+        self.pending_dma = pending.then_some(request);
+        self.noise = reader.u32()?;
+        self.execution_pc = reader.u32()?;
+        self.execution_link = reader.u32()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

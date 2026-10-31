@@ -158,6 +158,84 @@ impl DacFifo {
     }
 }
 
+/// Pending requests are transient, so the state keeps a fixed number of slots
+/// and drops anything beyond them instead of making the state size vary.
+const AUDIO_DMA_QUEUE_SLOTS: usize = 8;
+
+impl AudioDmaRequest {
+    pub(crate) const STATE_SIZE: usize = 8;
+
+    fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.left_address);
+        writer.u32(self.right_address);
+    }
+
+    fn load_state(reader: &mut crate::state::StateReader) -> Result<Self, crate::EmulatorError> {
+        Ok(Self {
+            left_address: reader.u32()?,
+            right_address: reader.u32()?,
+        })
+    }
+}
+
+impl DacFifo {
+    pub(crate) const STATE_SIZE: usize =
+        8 * 4 + 2 * 2 + 4 + 8 + 1 + AUDIO_DMA_QUEUE_SLOTS * AudioDmaRequest::STATE_SIZE;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.buffer_start);
+        writer.u32(self.clock_config);
+        writer.u32(self.mode_control1);
+        writer.u32(self.mode_control2);
+        writer.u32(self.sample_clock);
+        writer.u32(self.fifo_base_low);
+        writer.u32(self.fifo_base_high);
+        writer.u32(self.interrupt_control);
+        writer.u16(self.output_left);
+        writer.u16(self.output_right);
+        writer.u32(self.position);
+        writer.u64(self.phase);
+        let queued = self.dma_requests.len().min(AUDIO_DMA_QUEUE_SLOTS);
+        writer.u8(queued as u8);
+        for index in 0..AUDIO_DMA_QUEUE_SLOTS {
+            match self.dma_requests.get(index) {
+                Some(request) => request.save_state(writer),
+                None => {
+                    writer.u32(0);
+                    writer.u32(0);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        self.buffer_start = reader.u32()?;
+        self.clock_config = reader.u32()?;
+        self.mode_control1 = reader.u32()?;
+        self.mode_control2 = reader.u32()?;
+        self.sample_clock = reader.u32()?;
+        self.fifo_base_low = reader.u32()?;
+        self.fifo_base_high = reader.u32()?;
+        self.interrupt_control = reader.u32()?;
+        self.output_left = reader.u16()?;
+        self.output_right = reader.u16()?;
+        self.position = reader.u32()?;
+        self.phase = reader.u64()?;
+        let queued = usize::from(reader.u8()?).min(AUDIO_DMA_QUEUE_SLOTS);
+        self.dma_requests.clear();
+        for index in 0..AUDIO_DMA_QUEUE_SLOTS {
+            let request = AudioDmaRequest::load_state(reader)?;
+            if index < queued {
+                self.dma_requests.push_back(request);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

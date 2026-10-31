@@ -902,6 +902,50 @@ fn sign_extend(value: u32, bits: u32) -> u32 {
     (((value << (32 - bits)) as i32) >> (32 - bits)) as u32
 }
 
+impl Score7 {
+    pub(crate) const STATE_SIZE: usize = 32 * 4 + 32 * 4 + 3 * 4 + 4 * 4 + 8 + 8;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        for value in self.registers {
+            writer.u32(value);
+        }
+        for value in self.control {
+            writer.u32(value);
+        }
+        for value in self.special {
+            writer.u32(value);
+        }
+        writer.u32(self.ce_high);
+        writer.u32(self.ce_low);
+        writer.u32(self.pc);
+        writer.u32(self.previous_pc);
+        writer.u64(self.cycles);
+        writer.u64(self.pending_interrupts);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), EmulatorError> {
+        for value in &mut self.registers {
+            *value = reader.u32()?;
+        }
+        for value in &mut self.control {
+            *value = reader.u32()?;
+        }
+        for value in &mut self.special {
+            *value = reader.u32()?;
+        }
+        self.ce_high = reader.u32()?;
+        self.ce_low = reader.u32()?;
+        self.pc = reader.u32()?;
+        self.previous_pc = reader.u32()?;
+        self.cycles = reader.u64()?;
+        self.pending_interrupts = reader.u64()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

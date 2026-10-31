@@ -17,7 +17,14 @@ const RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: u32 = 10;
 const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: u32 = 27;
 const RETRO_PIXEL_FORMAT_XRGB8888: u32 = 1;
 const RETRO_LOG_INFO: u32 = 1;
+const RETRO_LOG_WARN: u32 = 2;
 const RETRO_LOG_ERROR: u32 = 3;
+/// Save-state envelope: 4-byte magic followed by a little-endian format
+/// version. Bump the version whenever the core's state layout changes so stale
+/// states are rejected instead of restoring into the wrong fields.
+const SAVE_STATE_MAGIC: [u8; 4] = *b"HSEM";
+const SAVE_STATE_FORMAT: u32 = 1;
+const SAVE_STATE_HEADER_LEN: usize = SAVE_STATE_MAGIC.len() + std::mem::size_of::<u32>();
 const INTERNAL_ROM_NAME: &str = "spg290.bin";
 const BIOS_ROM_NAME: &str = "hyperscan.bin";
 const RETRO_REGION_NTSC: u32 = 0;
@@ -104,7 +111,6 @@ pub struct RetroGameInfo {
 
 struct RetroState {
     environment: Option<EnvironmentCallback>,
-    log: Option<LogCallback>,
     video: Option<VideoCallback>,
     audio: Option<AudioCallback>,
     audio_batch: Option<AudioBatchCallback>,
@@ -117,7 +123,6 @@ impl RetroState {
     const fn new() -> Self {
         Self {
             environment: None,
-            log: None,
             video: None,
             audio: None,
             audio_batch: None,
@@ -130,8 +135,18 @@ impl RetroState {
 
 static STATE: Mutex<RetroState> = Mutex::new(RetroState::new());
 
+/// The frontend log callback lives in its own lock so diagnostics can be
+/// emitted while `STATE` is held (for example while validating a save state).
+static LOG_CALLBACK: Mutex<Option<LogCallback>> = Mutex::new(None);
+
 fn lock_state() -> std::sync::MutexGuard<'static, RetroState> {
     STATE.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn lock_log_callback() -> std::sync::MutexGuard<'static, Option<LogCallback>> {
+    LOG_CALLBACK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 /// Write a diagnostic to the frontend's log. Frontends without a log
@@ -140,7 +155,7 @@ fn log_message(level: u32, message: &str) {
     let Ok(text) = CString::new(message) else {
         return;
     };
-    let callback = lock_state().log;
+    let callback = *lock_log_callback();
     if let Some(callback) = callback {
         unsafe { callback(level, c"%s".as_ptr(), text.as_ptr()) };
     }
@@ -148,6 +163,10 @@ fn log_message(level: u32, message: &str) {
 
 fn log_info(message: &str) {
     log_message(RETRO_LOG_INFO, message);
+}
+
+fn log_warn(message: &str) {
+    log_message(RETRO_LOG_WARN, message);
 }
 
 fn log_error(message: &str) {
@@ -254,7 +273,7 @@ pub extern "C" fn retro_init() {
                 (&mut log as *mut RetroLogCallback).cast(),
             )
         } {
-            lock_state().log = log.log;
+            *lock_log_callback() = log.log;
         }
 
         let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -375,19 +394,99 @@ pub extern "C" fn retro_run() {
     });
 }
 
+fn write_save_state_header(buffer: &mut [u8]) {
+    buffer[..SAVE_STATE_MAGIC.len()].copy_from_slice(&SAVE_STATE_MAGIC);
+    buffer[SAVE_STATE_MAGIC.len()..SAVE_STATE_HEADER_LEN]
+        .copy_from_slice(&SAVE_STATE_FORMAT.to_le_bytes());
+}
+
+/// Validate the envelope and return the core payload. The caller logs the
+/// reason so an incompatible state is rejected with a visible warning.
+fn read_save_state_payload(data: &[u8]) -> Result<&[u8], String> {
+    if data.len() < SAVE_STATE_HEADER_LEN {
+        return Err("the buffer is shorter than the save-state header".to_owned());
+    }
+    if data[..SAVE_STATE_MAGIC.len()] != SAVE_STATE_MAGIC {
+        return Err("the buffer is not a HyperScanEmu save state".to_owned());
+    }
+    let version = u32::from_le_bytes(
+        data[SAVE_STATE_MAGIC.len()..SAVE_STATE_HEADER_LEN]
+            .try_into()
+            .unwrap(),
+    );
+    if version != SAVE_STATE_FORMAT {
+        return Err(format!(
+            "format version {version} is not supported (this core writes version {SAVE_STATE_FORMAT})"
+        ));
+    }
+    Ok(&data[SAVE_STATE_HEADER_LEN..])
+}
+
 #[no_mangle]
 pub extern "C" fn retro_serialize_size() -> usize {
-    guard(0, || 0)
+    guard(0, || {
+        lock_state()
+            .emulator
+            .as_ref()
+            .map_or(0, |emulator| SAVE_STATE_HEADER_LEN + emulator.state_size())
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn retro_serialize(_data: *mut c_void, _size: usize) -> bool {
-    guard(false, || false)
+pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
+    guard(false, || {
+        if data.is_null() {
+            return false;
+        }
+        let state = lock_state();
+        let Some(emulator) = state.emulator.as_ref() else {
+            return false;
+        };
+        let payload = emulator.serialize();
+        let total = SAVE_STATE_HEADER_LEN + payload.len();
+        if payload.len() != emulator.state_size() || size < total {
+            log_error("HyperScanEmu: the frontend supplied too small a save-state buffer");
+            return false;
+        }
+        // SAFETY: the frontend guarantees `size` writable bytes at `data`.
+        let buffer = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), total) };
+        write_save_state_header(buffer);
+        buffer[SAVE_STATE_HEADER_LEN..].copy_from_slice(&payload);
+        true
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn retro_unserialize(_data: *const c_void, _size: usize) -> bool {
-    guard(false, || false)
+pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
+    guard(false, || {
+        if data.is_null() {
+            return false;
+        }
+        // SAFETY: the frontend guarantees `size` readable bytes at `data`.
+        let buffer = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size) };
+        let payload = match read_save_state_payload(buffer) {
+            Ok(payload) => payload,
+            Err(reason) => {
+                log_warn(&format!("HyperScanEmu: rejecting save state: {reason}"));
+                return false;
+            }
+        };
+        let mut state = lock_state();
+        let Some(emulator) = state.emulator.as_mut() else {
+            log_warn("HyperScanEmu: rejecting save state: no content is loaded");
+            return false;
+        };
+        match emulator.deserialize(payload) {
+            Ok(()) => {
+                log_info("HyperScanEmu: save state restored");
+                true
+            }
+            Err(error) => {
+                log_warn(&format!("HyperScanEmu: rejecting save state: {error}"));
+                false
+            }
+        }
+    })
 }
 
 #[no_mangle]
@@ -622,6 +721,61 @@ mod tests {
     #[test]
     fn reports_supported_api_version() {
         assert_eq!(retro_api_version(), RETRO_API_VERSION);
+    }
+
+    fn test_emulator() -> Emulator {
+        let mut internal = vec![0; INTERNAL_ROM_SIZE];
+        let mut bios = vec![0; BIOS_ROM_SIZE];
+        internal[INTERNAL_ROM_SIZE - 1] = 1;
+        bios[BIOS_ROM_SIZE - 1] = 1;
+        Emulator::new(Firmware::from_parts(&internal, &bios).unwrap())
+    }
+
+    #[test]
+    fn save_state_envelope_rejects_other_versions() {
+        let mut buffer = [0_u8; SAVE_STATE_HEADER_LEN + 3];
+        buffer[SAVE_STATE_HEADER_LEN..].copy_from_slice(&[1, 2, 3]);
+        write_save_state_header(&mut buffer);
+        assert_eq!(
+            read_save_state_payload(&buffer).unwrap(),
+            &[1_u8, 2, 3][..],
+            "a freshly written envelope must be accepted"
+        );
+
+        buffer[SAVE_STATE_MAGIC.len()] = 0xFF;
+        assert!(
+            read_save_state_payload(&buffer).is_err(),
+            "a state from another format version must be rejected"
+        );
+
+        let truncated = [0_u8; SAVE_STATE_HEADER_LEN - 1];
+        assert!(
+            read_save_state_payload(&truncated).is_err(),
+            "a buffer shorter than the envelope must be rejected"
+        );
+    }
+
+    #[test]
+    fn abi_round_trip_rejects_unknown_versions() {
+        let mut emulator = test_emulator();
+        emulator.run_instructions(4).unwrap();
+        lock_state().emulator = Some(emulator);
+
+        let size = retro_serialize_size();
+        assert_eq!(size, SAVE_STATE_HEADER_LEN + Emulator::STATE_SIZE);
+        let mut buffer = vec![0_u8; size];
+        assert!(retro_serialize(buffer.as_mut_ptr().cast(), size));
+        assert_eq!(&buffer[..SAVE_STATE_MAGIC.len()], b"HSEM");
+
+        let mut from_the_future = buffer.clone();
+        from_the_future[SAVE_STATE_MAGIC.len()] = SAVE_STATE_FORMAT as u8 + 1;
+        assert!(!retro_unserialize(
+            from_the_future.as_ptr().cast(),
+            from_the_future.len()
+        ));
+
+        assert!(retro_unserialize(buffer.as_ptr().cast(), buffer.len()));
+        lock_state().emulator = None;
     }
 
     #[test]
