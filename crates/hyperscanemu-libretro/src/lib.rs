@@ -1,19 +1,25 @@
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Mutex;
 
 use hyperscanemu_core::{
-    ControllerButton, ControllerState, Emulator, Firmware, InputState, DISPLAY_HEIGHT,
-    DISPLAY_WIDTH,
+    ControllerButton, ControllerState, Emulator, Firmware, InputState, BIOS_ROM_SIZE,
+    DISPLAY_HEIGHT, DISPLAY_WIDTH, INTERNAL_ROM_SIZE,
 };
 use hyperscanemu_media::load_disc;
 
 const RETRO_API_VERSION: u32 = 1;
+const RETRO_ENVIRONMENT_SET_MESSAGE: u32 = 6;
 const RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: u32 = 9;
 const RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: u32 = 10;
+const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: u32 = 27;
 const RETRO_PIXEL_FORMAT_XRGB8888: u32 = 1;
+const RETRO_LOG_INFO: u32 = 1;
+const RETRO_LOG_ERROR: u32 = 3;
+const INTERNAL_ROM_NAME: &str = "spg290.bin";
+const BIOS_ROM_NAME: &str = "hyperscan.bin";
 const RETRO_REGION_NTSC: u32 = 0;
 const RETRO_DEVICE_JOYPAD: u32 = 1;
 const RETRO_DEVICE_ANALOG: u32 = 5;
@@ -42,6 +48,21 @@ type AudioCallback = unsafe extern "C" fn(left: i16, right: i16);
 type AudioBatchCallback = unsafe extern "C" fn(data: *const i16, frames: usize) -> usize;
 type InputPollCallback = unsafe extern "C" fn();
 type InputStateCallback = unsafe extern "C" fn(port: u32, device: u32, index: u32, id: u32) -> i16;
+type LogCallback = unsafe extern "C" fn(level: u32, format: *const c_char, ...);
+
+/// RETRO_ENVIRONMENT_GET_LOG_INTERFACE payload.
+#[repr(C)]
+pub struct RetroLogCallback {
+    log: Option<LogCallback>,
+}
+
+/// RETRO_ENVIRONMENT_SET_MESSAGE payload.
+#[repr(C)]
+pub struct RetroMessage {
+    msg: *const c_char,
+    /// Duration in frames.
+    frames: u32,
+}
 
 #[repr(C)]
 pub struct RetroSystemInfo {
@@ -83,6 +104,7 @@ pub struct RetroGameInfo {
 
 struct RetroState {
     environment: Option<EnvironmentCallback>,
+    log: Option<LogCallback>,
     video: Option<VideoCallback>,
     audio: Option<AudioCallback>,
     audio_batch: Option<AudioBatchCallback>,
@@ -95,6 +117,7 @@ impl RetroState {
     const fn new() -> Self {
         Self {
             environment: None,
+            log: None,
             video: None,
             audio: None,
             audio_batch: None,
@@ -106,6 +129,58 @@ impl RetroState {
 }
 
 static STATE: Mutex<RetroState> = Mutex::new(RetroState::new());
+
+fn lock_state() -> std::sync::MutexGuard<'static, RetroState> {
+    STATE.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// Write a diagnostic to the frontend's log. Frontends without a log
+/// interface simply have nothing to write to.
+fn log_message(level: u32, message: &str) {
+    let Ok(text) = CString::new(message) else {
+        return;
+    };
+    let callback = lock_state().log;
+    if let Some(callback) = callback {
+        unsafe { callback(level, c"%s".as_ptr(), text.as_ptr()) };
+    }
+}
+
+fn log_info(message: &str) {
+    log_message(RETRO_LOG_INFO, message);
+}
+
+fn log_error(message: &str) {
+    log_message(RETRO_LOG_ERROR, message);
+}
+
+/// Ask the frontend to show a short on-screen message. The text is mirrored to
+/// the log by the callers so headless frontends still see the reason.
+fn show_message(message: &str, frames: u32) {
+    let Ok(text) = CString::new(message) else {
+        return;
+    };
+    let payload = RetroMessage {
+        msg: text.as_ptr(),
+        frames,
+    };
+    let environment = lock_state().environment;
+    if let Some(callback) = environment {
+        unsafe {
+            callback(
+                RETRO_ENVIRONMENT_SET_MESSAGE,
+                (&payload as *const RetroMessage).cast_mut().cast(),
+            );
+        }
+    }
+}
+
+/// Report a failure the user can act on, both on screen and in the log.
+fn fail(message: &str) -> bool {
+    log_error(message);
+    show_message(message, 240);
+    false
+}
 
 #[no_mangle]
 pub extern "C" fn retro_api_version() -> u32 {
@@ -145,15 +220,28 @@ pub extern "C" fn retro_set_input_state(callback: Option<InputStateCallback>) {
 #[no_mangle]
 pub extern "C" fn retro_init() {
     let environment = STATE.lock().unwrap().environment;
-    if let Some(callback) = environment {
-        let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
-        unsafe {
-            callback(
-                RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-                (&mut format as *mut u32).cast(),
-            );
-        }
+    let Some(callback) = environment else {
+        return;
+    };
+
+    let mut log = RetroLogCallback { log: None };
+    if unsafe {
+        callback(
+            RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+            (&mut log as *mut RetroLogCallback).cast(),
+        )
+    } {
+        STATE.lock().unwrap().log = log.log;
     }
+
+    let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
+    unsafe {
+        callback(
+            RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+            (&mut format as *mut u32).cast(),
+        );
+    }
+    log_info("HyperScanEmu: core initialised (XRGB8888, 44100 Hz stereo)");
 }
 
 #[no_mangle]
@@ -277,27 +365,63 @@ pub extern "C" fn retro_cheat_set(_index: u32, _enabled: bool, _code: *const c_c
 /// `game` and its path must remain valid for the duration of this call.
 pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     let Some(game) = game.as_ref() else {
-        return false;
+        return fail("HyperScan: the frontend passed no content information.");
     };
-    let Some(path) = c_path(game.path) else {
-        return false;
+    if game.path.is_null() {
+        return fail("HyperScan: the frontend passed no content path.");
+    }
+    let Ok(path) = CStr::from_ptr(game.path).to_str() else {
+        return fail("HyperScan: the content path is not valid UTF-8.");
+    };
+    let path = PathBuf::from(path);
+
+    let internal = match load_firmware(INTERNAL_ROM_NAME, Some(&path)) {
+        Ok(bytes) => bytes,
+        Err(error) => return fail(&firmware_error(INTERNAL_ROM_NAME, &error)),
+    };
+    let bios = match load_firmware(BIOS_ROM_NAME, Some(&path)) {
+        Ok(bytes) => bytes,
+        Err(error) => return fail(&firmware_error(BIOS_ROM_NAME, &error)),
+    };
+    let firmware = match Firmware::from_parts(&internal, &bios) {
+        Ok(firmware) => firmware,
+        Err(error) => {
+            return fail(&format!(
+                "HyperScan: the firmware files are not usable.\n{error}\n\
+                 spg290.bin must be {INTERNAL_ROM_SIZE} bytes and hyperscan.bin {BIOS_ROM_SIZE} bytes."
+            ))
+        }
+    };
+    let disc = match load_disc(&path) {
+        Ok(disc) => disc,
+        Err(error) => {
+            return fail(&format!(
+                "HyperScan: failed to load this content.\n{error}\n\n\
+                 Supported content: a .bin disc image, a single-track .cue sheet or a .zip package."
+            ))
+        }
     };
 
-    let result = (|| {
-        let internal = load_firmware("spg290.bin", Some(&path))?;
-        let bios = load_firmware("hyperscan.bin", Some(&path))?;
-        let firmware = Firmware::from_parts(&internal, &bios).ok()?;
-        let disc = load_disc(&path).ok()?;
-        let mut emulator = Emulator::new(firmware);
-        emulator.attach_disc(disc);
-        Some(emulator)
-    })();
-
-    let Some(emulator) = result else {
-        return false;
-    };
+    let mut emulator = Emulator::new(firmware);
+    emulator.attach_disc(disc);
     STATE.lock().unwrap().emulator = Some(emulator);
+    log_info(&format!("HyperScanEmu: loaded {}", path.display()));
     true
+}
+
+/// Explain which firmware file the system directory is missing and where the
+/// core looked for it.
+fn firmware_error(name: &str, detail: &str) -> String {
+    // SAFETY: the environment callback is only called with the documented
+    // GET_SYSTEM_DIRECTORY payload.
+    let location = unsafe { system_directory() }
+        .map(|directory| directory.display().to_string())
+        .unwrap_or_else(|| "(frontend did not report a system directory)".to_owned());
+    format!(
+        "HyperScan: cannot load firmware {name}.\n{detail}\n\n\
+         Copy {INTERNAL_ROM_NAME} ({INTERNAL_ROM_SIZE} bytes) and \
+         {BIOS_ROM_NAME} ({BIOS_ROM_SIZE} bytes) into the system directory:\n{location}"
+    )
 }
 
 #[no_mangle]
@@ -402,10 +526,10 @@ unsafe fn c_path(path: *const c_char) -> Option<PathBuf> {
     ))
 }
 
-/// EmulatorJS cannot install firmware into a RetroArch system directory: it
-/// extracts an `EJS_biosUrl` archive beside the content file instead. Look in
-/// the frontend system directory first, then beside the content on Emscripten.
-unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Option<Vec<u8>> {
+/// Read one firmware file. The frontend system directory is authoritative;
+/// EmulatorJS cannot install into it, so there the content directory is also
+/// searched.
+unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Result<Vec<u8>, String> {
     let mut candidates = Vec::new();
     if let Some(directory) = system_directory() {
         candidates.push(directory.join(name));
@@ -416,7 +540,24 @@ unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Option<Vec<u8>> {
     }
     #[cfg(not(target_os = "emscripten"))]
     let _ = content;
-    candidates.into_iter().find_map(|path| fs::read(path).ok())
+
+    let mut searched = Vec::new();
+    for path in candidates {
+        searched.push(path.display().to_string());
+        match fs::read(&path) {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("cannot read {}: {error}", path.display()));
+            }
+        }
+    }
+
+    Err(if searched.is_empty() {
+        format!("{name} was not found because the frontend reported no system directory")
+    } else {
+        format!("{name} was not found in {}", searched.join(" or "))
+    })
 }
 
 unsafe fn system_directory() -> Option<PathBuf> {
