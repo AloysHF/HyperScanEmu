@@ -182,6 +182,28 @@ fn fail(message: &str) -> bool {
     false
 }
 
+/// Run `body`, turning a panic into `fallback`.
+///
+/// A panic must never unwind across the C ABI: the frontend is a host process
+/// (RetroDroid, RetroArch) that would be torn down with us. Swallowing the
+/// panic keeps the session recoverable and leaves a log entry behind.
+fn guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+        Ok(value) => value,
+        Err(payload) => {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_owned());
+            log_error(&format!(
+                "HyperScanEmu libretro entry point panicked: {detail}"
+            ));
+            fallback
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn retro_api_version() -> u32 {
     RETRO_API_VERSION
@@ -189,71 +211,76 @@ pub extern "C" fn retro_api_version() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn retro_set_environment(callback: Option<EnvironmentCallback>) {
-    STATE.lock().unwrap().environment = callback;
+    guard((), || lock_state().environment = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_video_refresh(callback: Option<VideoCallback>) {
-    STATE.lock().unwrap().video = callback;
+    guard((), || lock_state().video = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_audio_sample(callback: Option<AudioCallback>) {
-    STATE.lock().unwrap().audio = callback;
+    guard((), || lock_state().audio = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_audio_sample_batch(callback: Option<AudioBatchCallback>) {
-    STATE.lock().unwrap().audio_batch = callback;
+    guard((), || lock_state().audio_batch = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_input_poll(callback: Option<InputPollCallback>) {
-    STATE.lock().unwrap().input_poll = callback;
+    guard((), || lock_state().input_poll = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_input_state(callback: Option<InputStateCallback>) {
-    STATE.lock().unwrap().input_state = callback;
+    guard((), || lock_state().input_state = callback);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_init() {
-    let environment = STATE.lock().unwrap().environment;
-    let Some(callback) = environment else {
-        return;
-    };
+    guard((), || {
+        let environment = lock_state().environment;
+        let Some(callback) = environment else {
+            return;
+        };
 
-    let mut log = RetroLogCallback { log: None };
-    if unsafe {
-        callback(
-            RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
-            (&mut log as *mut RetroLogCallback).cast(),
-        )
-    } {
-        STATE.lock().unwrap().log = log.log;
-    }
+        let mut log = RetroLogCallback { log: None };
+        if unsafe {
+            callback(
+                RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+                (&mut log as *mut RetroLogCallback).cast(),
+            )
+        } {
+            lock_state().log = log.log;
+        }
 
-    let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
-    unsafe {
-        callback(
-            RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-            (&mut format as *mut u32).cast(),
-        );
-    }
-    log_info("HyperScanEmu: core initialised (XRGB8888, 44100 Hz stereo)");
+        let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
+        unsafe {
+            callback(
+                RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+                (&mut format as *mut u32).cast(),
+            );
+        }
+        log_info("HyperScanEmu: core initialised (XRGB8888, 44100 Hz stereo)");
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn retro_deinit() {
-    STATE.lock().unwrap().emulator = None;
+    guard((), || lock_state().emulator = None);
 }
 
 #[no_mangle]
 /// # Safety
 /// `info` must be null or point to writable `RetroSystemInfo` storage.
 pub unsafe extern "C" fn retro_get_system_info(info: *mut RetroSystemInfo) {
-    if let Some(info) = info.as_mut() {
+    guard((), || {
+        let Some(info) = info.as_mut() else {
+            return;
+        };
         *info = RetroSystemInfo {
             library_name: c"HyperScanEmu".as_ptr(),
             library_version: c"0.1.0".as_ptr(),
@@ -261,14 +288,17 @@ pub unsafe extern "C" fn retro_get_system_info(info: *mut RetroSystemInfo) {
             need_fullpath: true,
             block_extract: false,
         };
-    }
+    });
 }
 
 #[no_mangle]
 /// # Safety
 /// `info` must be null or point to writable `RetroSystemAvInfo` storage.
 pub unsafe extern "C" fn retro_get_system_av_info(info: *mut RetroSystemAvInfo) {
-    if let Some(info) = info.as_mut() {
+    guard((), || {
+        let Some(info) = info.as_mut() else {
+            return;
+        };
         *info = RetroSystemAvInfo {
             geometry: RetroGameGeometry {
                 base_width: 320,
@@ -282,131 +312,143 @@ pub unsafe extern "C" fn retro_get_system_av_info(info: *mut RetroSystemAvInfo) 
                 sample_rate: 44_100.0,
             },
         };
-    }
+    });
 }
 
 #[no_mangle]
-pub extern "C" fn retro_set_controller_port_device(_port: u32, _device: u32) {}
+pub extern "C" fn retro_set_controller_port_device(_port: u32, _device: u32) {
+    guard((), || {});
+}
 
 #[no_mangle]
 pub extern "C" fn retro_reset() {
-    if let Some(emulator) = &mut STATE.lock().unwrap().emulator {
-        emulator.reset();
-    }
+    guard((), || {
+        if let Some(emulator) = &mut lock_state().emulator {
+            emulator.reset();
+        }
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn retro_run() {
-    let mut state = STATE.lock().unwrap();
-    if let Some(callback) = state.input_poll {
-        unsafe { callback() };
-    }
-    let input = state
-        .input_state
-        .map(|callback| unsafe { poll_input(callback) })
-        .unwrap_or_default();
-    let video = state.video;
-    let audio = state.audio;
-    let audio_batch = state.audio_batch;
-    let Some(emulator) = &mut state.emulator else {
-        return;
-    };
-    emulator.set_input(input);
-    if emulator.run_frame().is_err() {
-        return;
-    }
+    guard((), || {
+        let mut state = lock_state();
+        if let Some(callback) = state.input_poll {
+            unsafe { callback() };
+        }
+        let input = state
+            .input_state
+            .map(|callback| unsafe { poll_input(callback) })
+            .unwrap_or_default();
+        let video = state.video;
+        let audio = state.audio;
+        let audio_batch = state.audio_batch;
+        let Some(emulator) = &mut state.emulator else {
+            return;
+        };
+        emulator.set_input(input);
+        if emulator.run_frame().is_err() {
+            return;
+        }
 
-    if let Some(callback) = video {
-        let (width, height) = emulator.display_size();
-        unsafe {
-            callback(
-                emulator.framebuffer().as_ptr().cast(),
-                width as u32,
-                height as u32,
-                width * size_of::<u32>(),
-            );
+        if let Some(callback) = video {
+            let (width, height) = emulator.display_size();
+            unsafe {
+                callback(
+                    emulator.framebuffer().as_ptr().cast(),
+                    width as u32,
+                    height as u32,
+                    width * size_of::<u32>(),
+                );
+            }
         }
-    }
-    if let Some(callback) = audio_batch {
-        let samples = emulator.audio_samples();
-        unsafe {
-            callback(samples.as_ptr(), samples.len() / 2);
+        if let Some(callback) = audio_batch {
+            let samples = emulator.audio_samples();
+            unsafe {
+                callback(samples.as_ptr(), samples.len() / 2);
+            }
+        } else if let Some(callback) = audio {
+            for sample in emulator.audio_samples().as_chunks::<2>().0 {
+                unsafe { callback(sample[0], sample[1]) };
+            }
         }
-    } else if let Some(callback) = audio {
-        for sample in emulator.audio_samples().as_chunks::<2>().0 {
-            unsafe { callback(sample[0], sample[1]) };
-        }
-    }
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn retro_serialize_size() -> usize {
-    0
+    guard(0, || 0)
 }
 
 #[no_mangle]
 pub extern "C" fn retro_serialize(_data: *mut c_void, _size: usize) -> bool {
-    false
+    guard(false, || false)
 }
 
 #[no_mangle]
 pub extern "C" fn retro_unserialize(_data: *const c_void, _size: usize) -> bool {
-    false
+    guard(false, || false)
 }
 
 #[no_mangle]
-pub extern "C" fn retro_cheat_reset() {}
+pub extern "C" fn retro_cheat_reset() {
+    guard((), || {});
+}
 
 #[no_mangle]
-pub extern "C" fn retro_cheat_set(_index: u32, _enabled: bool, _code: *const c_char) {}
+pub extern "C" fn retro_cheat_set(_index: u32, _enabled: bool, _code: *const c_char) {
+    guard((), || {});
+}
 
 #[no_mangle]
 /// # Safety
 /// `game` and its path must remain valid for the duration of this call.
 pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
-    let Some(game) = game.as_ref() else {
-        return fail("HyperScan: the frontend passed no content information.");
-    };
-    if game.path.is_null() {
-        return fail("HyperScan: the frontend passed no content path.");
-    }
-    let Ok(path) = CStr::from_ptr(game.path).to_str() else {
-        return fail("HyperScan: the content path is not valid UTF-8.");
-    };
-    let path = PathBuf::from(path);
-
-    let internal = match load_firmware(INTERNAL_ROM_NAME, Some(&path)) {
-        Ok(bytes) => bytes,
-        Err(error) => return fail(&firmware_error(INTERNAL_ROM_NAME, &error)),
-    };
-    let bios = match load_firmware(BIOS_ROM_NAME, Some(&path)) {
-        Ok(bytes) => bytes,
-        Err(error) => return fail(&firmware_error(BIOS_ROM_NAME, &error)),
-    };
-    let firmware = match Firmware::from_parts(&internal, &bios) {
-        Ok(firmware) => firmware,
-        Err(error) => {
-            return fail(&format!(
-                "HyperScan: the firmware files are not usable.\n{error}\n\
-                 spg290.bin must be {INTERNAL_ROM_SIZE} bytes and hyperscan.bin {BIOS_ROM_SIZE} bytes."
-            ))
+    guard(false, || unsafe {
+        let Some(game) = game.as_ref() else {
+            return fail("HyperScan: the frontend passed no content information.");
+        };
+        if game.path.is_null() {
+            return fail("HyperScan: the frontend passed no content path.");
         }
-    };
-    let disc = match load_disc(&path) {
-        Ok(disc) => disc,
-        Err(error) => {
-            return fail(&format!(
-                "HyperScan: failed to load this content.\n{error}\n\n\
-                 Supported content: a .bin disc image, a single-track .cue sheet or a .zip package."
-            ))
-        }
-    };
+        let Ok(path) = CStr::from_ptr(game.path).to_str() else {
+            return fail("HyperScan: the content path is not valid UTF-8.");
+        };
+        let path = PathBuf::from(path);
 
-    let mut emulator = Emulator::new(firmware);
-    emulator.attach_disc(disc);
-    STATE.lock().unwrap().emulator = Some(emulator);
-    log_info(&format!("HyperScanEmu: loaded {}", path.display()));
-    true
+        let internal = match load_firmware(INTERNAL_ROM_NAME, Some(&path)) {
+            Ok(bytes) => bytes,
+            Err(error) => return fail(&firmware_error(INTERNAL_ROM_NAME, &error)),
+        };
+        let bios = match load_firmware(BIOS_ROM_NAME, Some(&path)) {
+            Ok(bytes) => bytes,
+            Err(error) => return fail(&firmware_error(BIOS_ROM_NAME, &error)),
+        };
+        let firmware = match Firmware::from_parts(&internal, &bios) {
+            Ok(firmware) => firmware,
+            Err(error) => {
+                return fail(&format!(
+                    "HyperScan: the firmware files are not usable.\n{error}\n\
+                     spg290.bin must be {INTERNAL_ROM_SIZE} bytes and hyperscan.bin {BIOS_ROM_SIZE} bytes."
+                ))
+            }
+        };
+        let disc = match load_disc(&path) {
+            Ok(disc) => disc,
+            Err(error) => {
+                return fail(&format!(
+                    "HyperScan: failed to load this content.\n{error}\n\n\
+                     Supported content: a .bin disc image, a single-track .cue sheet or a .zip package."
+                ))
+            }
+        };
+
+        let mut emulator = Emulator::new(firmware);
+        emulator.attach_disc(disc);
+        lock_state().emulator = Some(emulator);
+        log_info(&format!("HyperScanEmu: loaded {}", path.display()));
+        true
+    })
 }
 
 /// Explain which firmware file the system directory is missing and where the
@@ -430,27 +472,27 @@ pub extern "C" fn retro_load_game_special(
     _info: *const RetroGameInfo,
     _num_info: usize,
 ) -> bool {
-    false
+    guard(false, || false)
 }
 
 #[no_mangle]
 pub extern "C" fn retro_unload_game() {
-    STATE.lock().unwrap().emulator = None;
+    guard((), || lock_state().emulator = None);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_get_region() -> u32 {
-    RETRO_REGION_NTSC
+    guard(RETRO_REGION_NTSC, || RETRO_REGION_NTSC)
 }
 
 #[no_mangle]
 pub extern "C" fn retro_get_memory_data(_id: u32) -> *mut c_void {
-    ptr::null_mut()
+    guard(ptr::null_mut(), ptr::null_mut)
 }
 
 #[no_mangle]
 pub extern "C" fn retro_get_memory_size(_id: u32) -> usize {
-    0
+    guard(0, || 0)
 }
 
 unsafe fn poll_input(callback: InputStateCallback) -> InputState {
@@ -561,7 +603,7 @@ unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Result<Vec<u8>, S
 }
 
 unsafe fn system_directory() -> Option<PathBuf> {
-    let environment = STATE.lock().unwrap().environment?;
+    let environment = lock_state().environment?;
     let mut directory: *const c_char = ptr::null();
     if !environment(
         RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
@@ -580,6 +622,16 @@ mod tests {
     #[test]
     fn reports_supported_api_version() {
         assert_eq!(retro_api_version(), RETRO_API_VERSION);
+    }
+
+    #[test]
+    fn panics_are_contained_at_the_c_abi_boundary() {
+        let recovered = guard(false, || -> bool { panic!("boom") });
+
+        assert!(
+            !recovered,
+            "a panicking entry point must return its fallback"
+        );
     }
 
     #[test]
