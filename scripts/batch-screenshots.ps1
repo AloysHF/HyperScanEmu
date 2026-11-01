@@ -18,7 +18,7 @@
 
 .PARAMETER SystemDir
     Directory containing hyperscanemu/spg290.bin and hyperscanemu/hyperscan.bin.
-    Default: tmp/hyprscan
+    Default: tmp/roms
 
 .PARAMETER Frames
     Frames to emulate before capturing. Default: 1800. When omitted as an
@@ -79,7 +79,7 @@ if (-not $OutDir) {
     $OutDir = Join-Path $repoRoot "docs\images"
 }
 if (-not $SystemDir) {
-    $SystemDir = Join-Path $repoRoot "tmp\hyprscan"
+    $SystemDir = Join-Path $repoRoot "tmp\roms"
 }
 $firmwareDir = Join-Path $SystemDir "hyperscanemu"
 $internalRom = Join-Path $firmwareDir "spg290.bin"
