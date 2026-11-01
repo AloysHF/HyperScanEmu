@@ -40,9 +40,11 @@ Copy `hyperscanemu_libretro_ios.dylib` into `Payload/RetroArch.app/modules/`.
 Place in the frontend system directory used by RetroArch on device:
 
 ```text
-spg290.bin      32768 bytes
-hyperscan.bin  1048576 bytes
+<system>/hyperscanemu/spg290.bin       32768 bytes
+<system>/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
+
+Folder and file names are case-sensitive; no other location is searched.
 
 Load a BIN / single-track CUE / ZIP disc package through **Load Content**. See
 [Game File Formats](Game-File-Formats.md) and [RetroArch Core](RetroArch-Core.md).

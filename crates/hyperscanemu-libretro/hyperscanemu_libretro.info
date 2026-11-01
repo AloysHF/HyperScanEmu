@@ -29,12 +29,13 @@ needs_fullpath = "true"
 disk_control = "false"
 is_experimental = "false"
 
-# Required firmware (place in the frontend system directory)
-firmware0 = "spg290.bin"
+# Required firmware (fixed, case-sensitive names below <system>/hyperscanemu/)
+firmware0_path = "hyperscanemu/spg290.bin"
 firmware0_desc = "SPG290 internal ROM (32768 bytes)"
 firmware0_opt = "false"
-firmware1 = "hyperscan.bin"
+firmware1_path = "hyperscanemu/hyperscan.bin"
 firmware1_desc = "HyperScan BIOS (1048576 bytes)"
 firmware1_opt = "false"
 
-description = "HyperScanEmu is an evidence-driven, clean-room emulator for the Mattel HyperScan (Sunplus SPG290). This libretro core loads BIN/CUE/ZIP disc packages and requires legally dumped firmware."
+notes = "(!) Firmware file names are case-sensitive and must stay spg290.bin and hyperscan.bin.|(!) Both files are required; the internal ROM must be 32768 bytes and the BIOS 1048576 bytes."
+description = "HyperScanEmu is an evidence-driven, clean-room emulator for the Mattel HyperScan (Sunplus SPG290). This libretro core loads BIN/CUE/ZIP disc packages and requires legally dumped firmware in hyperscanemu/."

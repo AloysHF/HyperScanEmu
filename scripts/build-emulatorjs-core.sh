@@ -193,9 +193,10 @@ data/
 ```
 
 The core accepts BIN/CUE disc images (optionally inside a ZIP) and requires
-legally dumped firmware. Package `spg290.bin` and `hyperscan.bin` in a ZIP and
-point `EJS_biosUrl` at it; EmulatorJS extracts the firmware next to the content,
-where the core looks for it.
+legally dumped firmware. Package `hyperscanemu/spg290.bin` and
+`hyperscanemu/hyperscan.bin` in a ZIP and point `EJS_biosUrl` at it;
+EmulatorJS extracts the archive into the wasm filesystem root, where the core
+reads `/hyperscanemu/`.
 EOF
 
 ZIP="$OUT_DIR/../hyperscan-emu-emulatorjs.zip"

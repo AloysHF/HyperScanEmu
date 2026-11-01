@@ -56,9 +56,14 @@ RetroArch (or compatible) core/info locations used on the device.
 Place legally dumped firmware in the frontend **system** directory:
 
 ```text
-spg290.bin      32768 bytes
-hyperscan.bin  1048576 bytes
+<system>/hyperscanemu/spg290.bin       32768 bytes
+<system>/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
+
+The folder and file names are case-sensitive. The core reads only this fixed
+location; it does not search the content directory or other candidate paths.
+The `.info` file declares the same paths, so RetroArch's core information page
+lists them as required firmware.
 
 See [Game File Formats](Game-File-Formats.md) for sizes and roles.
 

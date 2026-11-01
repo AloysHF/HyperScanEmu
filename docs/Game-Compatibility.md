@@ -87,8 +87,8 @@ Screenshots are the 1800-frame `--screenshot` output (`docs/images/`).
 Example reference commands:
 
 ```text
-hyperscanemu -r <internal-rom.bin> -b <bios.bin> --trace 15000000
-hyperscanemu <media> -r <internal-rom.bin> -b <bios.bin> --headless --frames 300 --output frame.ppm
+hyperscanemu --system-dir <DIR> --trace 15000000
+hyperscanemu <media> --system-dir <DIR> --headless --frames 300 --output frame.ppm
 ```
 
 Headless runs print UART, final PC, PPU/TVE controls, layer state, CD command

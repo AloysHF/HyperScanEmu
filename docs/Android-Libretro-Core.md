@@ -27,8 +27,8 @@ Update later with **Online Updater → Update Installed Cores**.
 4. Place firmware in the **system** directory (see
    [RetroArch Core](RetroArch-Core.md)):
    ```text
-   spg290.bin      32768 bytes
-   hyperscan.bin  1048576 bytes
+   <system>/hyperscanemu/spg290.bin       32768 bytes
+   <system>/hyperscanemu/hyperscan.bin  1048576 bytes
    ```
 5. Load the core, then **Load Content** with a BIN, single-track CUE, or ZIP
    disc package.
@@ -61,9 +61,12 @@ virtual-controller preset, firmware requirements and orientation.
 
 Rules the core follows for any Android host:
 
-- Firmware (`spg290.bin`, `hyperscan.bin`) is read from the directory answered
-  by `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`; the content path itself may be a
-  disposable copy in the app cache.
+- Firmware (`hyperscanemu/spg290.bin`, `hyperscanemu/hyperscan.bin`) is read
+  from the directory answered by `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`; the
+  content path itself may be a disposable copy in the app cache. RetroDroid
+  answers that call with one shared private system root and copies the files
+  from the user-visible `BIOS/hyperscan/` folder into
+  `<root>/hyperscanemu/`, so the same relative layout serves every frontend.
 - Load failures are reported with `RETRO_ENVIRONMENT_SET_MESSAGE` and the log,
   never as a silent `false`.
 - Panics are caught at the C ABI boundary, so a bad frame cannot kill the host.

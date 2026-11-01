@@ -1,17 +1,17 @@
 use std::ffi::{c_char, c_void, CStr, CString};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;
 
 use hyperscanemu_core::{
-    ControllerButton, ControllerState, Emulator, Firmware, InputState, BIOS_ROM_SIZE,
+    firmware, ControllerButton, ControllerState, Emulator, InputState, BIOS_ROM_SIZE,
     DISPLAY_HEIGHT, DISPLAY_WIDTH, INTERNAL_ROM_SIZE,
 };
 use hyperscanemu_media::load_disc;
 
 const RETRO_API_VERSION: u32 = 1;
 const RETRO_ENVIRONMENT_SET_MESSAGE: u32 = 6;
+#[cfg(not(target_os = "emscripten"))]
 const RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: u32 = 9;
 const RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: u32 = 10;
 const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: u32 = 27;
@@ -25,8 +25,6 @@ const RETRO_LOG_ERROR: u32 = 3;
 const SAVE_STATE_MAGIC: [u8; 4] = *b"HSEM";
 const SAVE_STATE_FORMAT: u32 = 1;
 const SAVE_STATE_HEADER_LEN: usize = SAVE_STATE_MAGIC.len() + std::mem::size_of::<u32>();
-const INTERNAL_ROM_NAME: &str = "spg290.bin";
-const BIOS_ROM_NAME: &str = "hyperscan.bin";
 const RETRO_REGION_NTSC: u32 = 0;
 const RETRO_DEVICE_JOYPAD: u32 = 1;
 const RETRO_DEVICE_ANALOG: u32 = 5;
@@ -531,22 +529,13 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
             return fail("HyperScan: this frontend does not support XRGB8888 video.");
         }
 
-        let internal = match load_firmware(INTERNAL_ROM_NAME, Some(&path)) {
-            Ok(bytes) => bytes,
-            Err(error) => return fail(&firmware_error(INTERNAL_ROM_NAME, &error)),
+        let root = match firmware_root() {
+            Ok(root) => root,
+            Err(error) => return fail(&firmware_location_error(&error)),
         };
-        let bios = match load_firmware(BIOS_ROM_NAME, Some(&path)) {
-            Ok(bytes) => bytes,
-            Err(error) => return fail(&firmware_error(BIOS_ROM_NAME, &error)),
-        };
-        let firmware = match Firmware::from_parts(&internal, &bios) {
+        let firmware = match firmware::load(&root) {
             Ok(firmware) => firmware,
-            Err(error) => {
-                return fail(&format!(
-                    "HyperScan: the firmware files are not usable.\n{error}\n\
-                     spg290.bin must be {INTERNAL_ROM_SIZE} bytes and hyperscan.bin {BIOS_ROM_SIZE} bytes."
-                ))
-            }
+            Err(error) => return fail(&firmware_location_error(&error.to_string())),
         };
         let disc = match load_disc(&path) {
             Ok(disc) => disc,
@@ -566,18 +555,16 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     })
 }
 
-/// Explain which firmware file the system directory is missing and where the
-/// core looked for it.
-fn firmware_error(name: &str, detail: &str) -> String {
-    // SAFETY: the environment callback is only called with the documented
-    // GET_SYSTEM_DIRECTORY payload.
-    let location = unsafe { system_directory() }
-        .map(|directory| directory.display().to_string())
-        .unwrap_or_else(|| "(frontend did not report a system directory)".to_owned());
+/// Explain where the core looked for its firmware and what it needs.
+fn firmware_location_error(detail: &str) -> String {
+    let location = match firmware_root() {
+        Ok(root) => root.join(firmware::FIRMWARE_DIR).display().to_string(),
+        Err(_) => "(frontend did not report a system directory)".to_owned(),
+    };
     format!(
-        "HyperScan: cannot load firmware {name}.\n{detail}\n\n\
-         Copy {INTERNAL_ROM_NAME} ({INTERNAL_ROM_SIZE} bytes) and \
-         {BIOS_ROM_NAME} ({BIOS_ROM_SIZE} bytes) into the system directory:\n{location}"
+        "HyperScan: cannot load firmware.\n{detail}\n\n\
+         Copy spg290.bin ({INTERNAL_ROM_SIZE} bytes) and \
+         hyperscan.bin ({BIOS_ROM_SIZE} bytes) into:\n{location}"
     )
 }
 
@@ -674,6 +661,7 @@ fn analog_to_u8(value: i16) -> u8 {
     ((i32::from(value) + 32_768) * 255 / 65_535) as u8
 }
 
+#[cfg(not(target_os = "emscripten"))]
 unsafe fn c_path(path: *const c_char) -> Option<PathBuf> {
     if path.is_null() {
         return None;
@@ -683,40 +671,25 @@ unsafe fn c_path(path: *const c_char) -> Option<PathBuf> {
     ))
 }
 
-/// Read one firmware file. The frontend system directory is authoritative;
-/// EmulatorJS cannot install into it, so there the content directory is also
-/// searched.
-unsafe fn load_firmware(name: &str, content: Option<&Path>) -> Result<Vec<u8>, String> {
-    let mut candidates = Vec::new();
-    if let Some(directory) = system_directory() {
-        candidates.push(directory.join(name));
-    }
+/// Root below which every frontend keeps its firmware.
+///
+/// EmulatorJS extracts archives into the wasm filesystem root and does not
+/// report a RetroArch system directory, so `/` is the root there.
+fn firmware_root() -> Result<PathBuf, String> {
     #[cfg(target_os = "emscripten")]
-    if let Some(path) = content {
-        candidates.push(path.parent().unwrap_or_else(|| Path::new("/")).join(name));
+    {
+        Ok(PathBuf::from("/"))
     }
     #[cfg(not(target_os = "emscripten"))]
-    let _ = content;
-
-    let mut searched = Vec::new();
-    for path in candidates {
-        searched.push(path.display().to_string());
-        match fs::read(&path) {
-            Ok(bytes) => return Ok(bytes),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(format!("cannot read {}: {error}", path.display()));
-            }
-        }
+    {
+        // SAFETY: the environment callback is only called with the documented
+        // GET_SYSTEM_DIRECTORY payload.
+        unsafe { system_directory() }
+            .ok_or_else(|| "the frontend did not report a system directory".to_owned())
     }
-
-    Err(if searched.is_empty() {
-        format!("{name} was not found because the frontend reported no system directory")
-    } else {
-        format!("{name} was not found in {}", searched.join(" or "))
-    })
 }
 
+#[cfg(not(target_os = "emscripten"))]
 unsafe fn system_directory() -> Option<PathBuf> {
     let environment = lock_state().environment?;
     let mut directory: *const c_char = ptr::null();
@@ -733,6 +706,7 @@ unsafe fn system_directory() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyperscanemu_core::Firmware;
 
     #[test]
     fn reports_supported_api_version() {

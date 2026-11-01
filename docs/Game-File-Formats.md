@@ -63,8 +63,11 @@ RALL (`0x00`), WRITE-E (`0x53`) and WRITE-NE (`0x1a`). Addressing wraps across t
 
 | File | Size | Role |
 |---|---:|---|
-| `spg290.bin` | 32768 | SPG290 internal ROM |
-| `hyperscan.bin` | 1048576 | HyperScan BIOS |
+| `hyperscanemu/spg290.bin` | 32768 | SPG290 internal ROM |
+| `hyperscanemu/hyperscan.bin` | 1048576 | HyperScan BIOS |
 
-Standalone commands take both firmware paths explicitly. The libretro core loads
-them from the frontend system directory using the filenames above.
+Both frontends resolve firmware from `<system>/hyperscanemu/` with these exact
+case-sensitive names. The standalone binary uses `--system-dir` (default
+`system`); the libretro core uses `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`, and
+on Emscripten treats `/` as the system directory. There are no alternative
+locations, filename aliases, or size-based discovery.

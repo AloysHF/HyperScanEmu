@@ -6,7 +6,8 @@
     Runs hyperscan-emu in screenshot mode (-S/--screenshot) for every .zip
     file found under tmp/hyperscan_game. Output PNGs are saved to docs/images/,
     named after the game file (without extension). Firmware (SPG290 internal ROM
-    and HyperScan BIOS) is never bundled; pass paths or use the local tmp defaults.
+    and HyperScan BIOS) is never bundled; pass a system directory or use the local
+    tmp default.
 
     Boot timeline (approximate, reference retail media):
       300  frames — HyperScan startup frame
@@ -15,11 +16,9 @@
       3600 frames — opening animation
     Default capture is 1800 frames (loading-screen window). Override with -Frames.
 
-.PARAMETER InternalRom
-    Path to the 32 KiB SPG290 internal ROM. Default: tmp/hyprscan/spg290.bin
-
-.PARAMETER Bios
-    Path to the 1 MiB HyperScan BIOS. Default: tmp/hyprscan/hyperscan.bin
+.PARAMETER SystemDir
+    Directory containing hyperscanemu/spg290.bin and hyperscanemu/hyperscan.bin.
+    Default: tmp/roms
 
 .PARAMETER Frames
     Frames to emulate before capturing. Default: 1800. When omitted as an
@@ -42,8 +41,7 @@
 #>
 
 param(
-    [string]$InternalRom = "",
-    [string]$Bios = "",
+    [string]$SystemDir = "",
     [int]$Frames = 1800,
     [string[]]$Filter = @(),
     [string]$Binary = "",
@@ -80,23 +78,23 @@ if (-not $GameDir) {
 if (-not $OutDir) {
     $OutDir = Join-Path $repoRoot "docs\images"
 }
-if (-not $InternalRom) {
-    $InternalRom = Join-Path $repoRoot "tmp\hyprscan\spg290.bin"
+if (-not $SystemDir) {
+    $SystemDir = Join-Path $repoRoot "tmp\roms"
 }
-if (-not $Bios) {
-    $Bios = Join-Path $repoRoot "tmp\hyprscan\hyperscan.bin"
-}
+$firmwareDir = Join-Path $SystemDir "hyperscanemu"
+$internalRom = Join-Path $firmwareDir "spg290.bin"
+$bios = Join-Path $firmwareDir "hyperscan.bin"
 
 if (-not (Test-Path $GameDir)) {
     Write-Error "Game directory not found: $GameDir"
     exit 1
 }
-if (-not (Test-Path $InternalRom)) {
-    Write-Error "Internal ROM not found: $InternalRom (pass -InternalRom)"
+if (-not (Test-Path $internalRom)) {
+    Write-Error "Internal ROM not found: $internalRom (expected under -SystemDir)"
     exit 1
 }
-if (-not (Test-Path $Bios)) {
-    Write-Error "BIOS not found: $Bios (pass -Bios)"
+if (-not (Test-Path $bios)) {
+    Write-Error "BIOS not found: $bios (expected under -SystemDir)"
     exit 1
 }
 
@@ -124,8 +122,7 @@ if (-not $Binary) {
 }
 
 Write-Host "Using binary:  $Binary"
-Write-Host "Internal ROM:  $InternalRom"
-Write-Host "BIOS:          $Bios"
+Write-Host "System dir:    $SystemDir"
 Write-Host "Game dir:      $GameDir"
 Write-Host "Output dir:    $OutDir"
 if ($framesSpecified) {
@@ -187,7 +184,7 @@ foreach ($game in $games) {
         }
 
         $output = & $Binary $game.FullName `
-            --internal-rom $InternalRom --bios $Bios `
+            --system-dir $SystemDir `
             --screenshot $outPath --screenshot-frames $captureFrames 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {

@@ -97,16 +97,26 @@ The HyperScan requires two legally dumped firmware images:
 
 | File | Size |
 |------|------|
-| `spg290.bin` | 32768 bytes (SPG290 internal ROM) |
-| `hyperscan.bin` | 1048576 bytes (HyperScan BIOS) |
+| `hyperscanemu/spg290.bin` | 32768 bytes (SPG290 internal ROM) |
+| `hyperscanemu/hyperscan.bin` | 1048576 bytes (HyperScan BIOS) |
 
 EmulatorJS cannot install files into a RetroArch system directory. Instead it
-decompresses the `EJS_biosUrl` archive and writes each entry next to the content
-file in the wasm filesystem. Package both images in a ZIP (any folder layout;
-EmulatorJS flattens entry names) and pass its blob URL as `EJS_biosUrl`. The
-core looks in the frontend system directory first and, on Emscripten, falls
-back to the content's directory, so the same core works in RetroArch and in the
-browser.
+decompresses the `EJS_biosUrl` archive into the root of the wasm filesystem,
+keeping the archive's directory entries. Package both images under a
+`hyperscanemu/` folder and pass the ZIP's blob URL as `EJS_biosUrl`:
+
+```
+hyperscan-firmware.zip
+  hyperscanemu/
+    spg290.bin
+    hyperscan.bin
+```
+
+The Emscripten build treats `/` as the system directory, so the archive lands
+exactly where the core expects it. Folder and file names are case-sensitive.
+Outside the browser the same core reads `<system>/hyperscanemu/` from
+`RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`, so one layout serves RetroArch,
+RetroDroid and EmulatorJS.
 
 Firmware is copyrighted and is neither distributed with this repository nor
 required by the site.
