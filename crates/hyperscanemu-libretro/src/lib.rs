@@ -14,6 +14,7 @@ const RETRO_ENVIRONMENT_SET_MESSAGE: u32 = 6;
 #[cfg(not(target_os = "emscripten"))]
 const RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: u32 = 9;
 const RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: u32 = 10;
+#[cfg(not(target_os = "emscripten"))]
 const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: u32 = 27;
 const RETRO_PIXEL_FORMAT_XRGB8888: u32 = 1;
 const RETRO_LOG_INFO: u32 = 1;
@@ -297,13 +298,15 @@ pub extern "C" fn retro_set_input_state(callback: Option<InputStateCallback>) {
 #[no_mangle]
 pub extern "C" fn retro_init() {
     guard((), || {
-        let environment = lock_state().environment;
-        let Some(callback) = environment else {
-            return;
-        };
-
+        // The log interface is queried natively only; over wasm the callback is
+        // unusable (see `LogCallback`) and stderr carries the message instead.
         #[cfg(not(target_os = "emscripten"))]
         {
+            let environment = lock_state().environment;
+            let Some(callback) = environment else {
+                return;
+            };
+
             let mut log = RetroLogCallback { log: None };
             if unsafe {
                 callback(
