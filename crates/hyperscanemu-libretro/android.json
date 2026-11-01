@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "core": "hyperscanemu",
+  "so_name": "libhyperscanemu.so",
+  "system": "hyperscan",
+  "display_name": {
+    "en": "HyperScan",
+    "zh": "HyperScan"
+  },
+  "short_name": "HyperScan",
+  "manufacturer": "Mattel",
+  "supported_extensions": ["bin", "cue", "zip"],
+  "save_state_format": 1,
+  "firmware": [
+    {
+      "file": "spg290.bin",
+      "required": true,
+      "hint": {
+        "en": "SPG290 internal ROM, exactly 32768 bytes. Copy it into the system directory.",
+        "zh": "SPG290 内部 ROM，大小必须为 32768 字节。请放入系统目录。"
+      }
+    },
+    {
+      "file": "hyperscan.bin",
+      "required": true,
+      "hint": {
+        "en": "HyperScan BIOS, exactly 1048576 bytes. Copy it into the system directory.",
+        "zh": "HyperScan BIOS，大小必须为 1048576 字节。请放入系统目录。"
+      }
+    }
+  ],
+  "input": {
+    "preset": "dpad-abcd-select"
+  },
+  "video": {
+    "orientation": "landscape",
+    "pixel_format": "xrgb8888"
+  },
+  "notes": {
+    "en": "Mattel HyperScan (Sunplus SPG290) with RFID card games. Requires spg290.bin and hyperscan.bin firmware; loads .bin, .cue or .zip disc images.",
+    "zh": "Mattel HyperScan（凌阳 SPG290）主机，支持 RFID 卡牌游戏。需要 spg290.bin 与 hyperscan.bin 固件；可加载 .bin、.cue 或 .zip 光盘镜像。"
+  }
+}

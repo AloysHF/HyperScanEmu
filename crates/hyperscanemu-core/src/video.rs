@@ -155,6 +155,44 @@ impl VideoController {
         }
     }
 
+    pub(crate) const STATE_SIZE: usize = 64 * 4 + 0x5_000 + 4 + 4 + 4 + 21 * 4 + 1 + 3 * 4 + 1 + 8;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32_slots(&self.ppu_registers, 64);
+        writer.byte_slot(&self.ppu_memory, 0x5_000);
+        writer.u32(self.irq_control);
+        writer.u32(self.irq_status);
+        writer.u32(self.tve_control);
+        writer.u32_slots(&self.tve_registers, 21);
+        writer.u8(self.fade);
+        writer.u32_slots(&self.buffer_start, 3);
+        writer.u8(self.buffer_control);
+        writer.u64(self.frame_cycle);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        for (value, stored) in self.ppu_registers.iter_mut().zip(reader.u32_slots(64)?) {
+            *value = stored;
+        }
+        self.ppu_memory.copy_from_slice(reader.byte_slot(0x5_000)?);
+        self.irq_control = reader.u32()?;
+        self.irq_status = reader.u32()?;
+        self.tve_control = reader.u32()?;
+        for (value, stored) in self.tve_registers.iter_mut().zip(reader.u32_slots(21)?) {
+            *value = stored;
+        }
+        self.fade = reader.u8()?;
+        for (value, stored) in self.buffer_start.iter_mut().zip(reader.u32_slots(3)?) {
+            *value = stored;
+        }
+        self.buffer_control = reader.u8()?;
+        self.frame_cycle = reader.u64()?;
+        Ok(())
+    }
+
     pub(crate) fn ppu_render_state(&self) -> PpuRenderState {
         let layer = |index: usize| {
             let base = [0x20, 0x3c, 0x58][index];

@@ -179,6 +179,91 @@ impl Emulator {
     pub fn firmware_fingerprint(&self) -> u64 {
         self.bus.firmware_fingerprint()
     }
+
+    /// Size of the payload written by [`Emulator::serialize`], in bytes. The
+    /// layout is fixed, so the value is stable while the content is loaded and
+    /// can be reported to the frontend once (libretro reads it before saving).
+    pub fn state_size(&self) -> usize {
+        Self::STATE_SIZE
+    }
+
+    pub const STATE_SIZE: usize = 8
+        + 8
+        + 4
+        + 4
+        + 8
+        + DISPLAY_WIDTH * DISPLAY_HEIGHT * 4
+        + InputState::STATE_SIZE
+        + Score7::STATE_SIZE
+        + Bus::STATE_SIZE;
+
+    /// Serialize the complete machine state (CPU, memory, peripherals, video
+    /// output). Transient output buffers such as the audio queue are rebuilt by
+    /// the next frame and are therefore not stored.
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut writer = crate::state::StateWriter::with_capacity(Self::STATE_SIZE);
+        writer.u64(self.disc.as_ref().map_or(0, crate::DiscImage::fingerprint));
+        writer.u64(self.bus.firmware_fingerprint());
+        writer.u32(self.display_width as u32);
+        writer.u32(self.display_height as u32);
+        writer.u64(self.frame_index);
+        writer.u32_slots(&self.framebuffer, DISPLAY_WIDTH * DISPLAY_HEIGHT);
+        self.input.save_state(&mut writer);
+        self.cpu.save_state(&mut writer);
+        self.bus.save_state(&mut writer);
+        writer.into_bytes()
+    }
+
+    /// Restore a state produced by [`Emulator::serialize`]. The state is parsed
+    /// into scratch copies first, so a rejected state leaves the running
+    /// machine untouched.
+    pub fn deserialize(&mut self, bytes: &[u8]) -> Result<(), EmulatorError> {
+        let mut reader = crate::state::StateReader::new(bytes);
+        let disc = reader.u64()?;
+        let firmware = reader.u64()?;
+        if firmware != self.bus.firmware_fingerprint() {
+            return Err(EmulatorError::InvalidSaveState(
+                "the state was written with different firmware",
+            ));
+        }
+        if disc != self.disc.as_ref().map_or(0, crate::DiscImage::fingerprint) {
+            return Err(EmulatorError::InvalidSaveState(
+                "the state was written for different content",
+            ));
+        }
+        let display_width = reader.u32()? as usize;
+        let display_height = reader.u32()? as usize;
+        if display_width == 0
+            || display_height == 0
+            || display_width > DISPLAY_WIDTH
+            || display_height > DISPLAY_HEIGHT
+            || !display_width.is_multiple_of(2)
+        {
+            return Err(EmulatorError::InvalidSaveState(
+                "the stored frame geometry is not supported",
+            ));
+        }
+        let frame_index = reader.u64()?;
+        let mut framebuffer: Vec<u32> = reader.u32_slots(DISPLAY_WIDTH * DISPLAY_HEIGHT)?;
+        framebuffer.truncate(display_width * display_height);
+        let mut input = self.input;
+        input.load_state(&mut reader)?;
+        let mut cpu = self.cpu.clone();
+        cpu.load_state(&mut reader)?;
+        let mut bus = self.bus.clone();
+        bus.load_state(&mut reader)?;
+
+        self.cpu = cpu;
+        self.bus = bus;
+        self.framebuffer = framebuffer;
+        self.audio_samples.clear();
+        self.uart_output.clear();
+        self.input = input;
+        self.frame_index = frame_index;
+        self.display_width = display_width;
+        self.display_height = display_height;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +302,54 @@ mod tests {
         assert_eq!(emulator.framebuffer().len(), 320 * 240);
         assert!(emulator.framebuffer().iter().all(|pixel| *pixel == 0));
         assert!(emulator.audio_samples().is_empty());
+    }
+
+    #[test]
+    fn serialized_state_has_the_reported_size() {
+        let emulator = Emulator::new(test_firmware());
+        let state = emulator.serialize();
+
+        assert_eq!(state.len(), emulator.state_size());
+    }
+
+    #[test]
+    fn save_state_round_trips_the_machine() {
+        let mut emulator = Emulator::new(test_firmware());
+        emulator.run_instructions(4).unwrap();
+        let saved = emulator.serialize();
+
+        emulator.run_instructions(4).unwrap();
+        assert_ne!(emulator.serialize(), saved);
+
+        emulator.deserialize(&saved).unwrap();
+        assert_eq!(emulator.serialize(), saved);
+    }
+
+    #[test]
+    fn state_from_other_firmware_is_rejected() {
+        let mut emulator = Emulator::new(test_firmware());
+        let mut saved = emulator.serialize();
+        saved[8] ^= 0xff;
+
+        assert_eq!(
+            emulator.deserialize(&saved),
+            Err(EmulatorError::InvalidSaveState(
+                "the state was written with different firmware"
+            ))
+        );
+    }
+
+    #[test]
+    fn truncated_state_is_rejected() {
+        let mut emulator = Emulator::new(test_firmware());
+        let saved = emulator.serialize();
+
+        assert_eq!(
+            emulator.deserialize(&saved[..saved.len() - 1]),
+            Err(EmulatorError::InvalidSaveState(
+                "the state buffer is truncated"
+            ))
+        );
     }
 
     #[test]

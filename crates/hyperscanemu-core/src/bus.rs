@@ -565,6 +565,43 @@ fn apply_frame_fade(output: &mut [u32], fade: u8) {
     }
 }
 
+impl Bus {
+    pub(crate) const STATE_SIZE: usize =
+        DRAM_SIZE + INTERNAL_SRAM_SIZE + 1 + Spg290Devices::STATE_SIZE;
+
+    /// Save the guest-visible memory and peripherals. The firmware is not part
+    /// of the state; the caller validates its fingerprint before restoring.
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.byte_slot(&self.dram, DRAM_SIZE);
+        writer.byte_slot(&self.internal_sram, INTERNAL_SRAM_SIZE);
+        writer.u8(match self.boot_source {
+            BootSource::InternalRom => 0,
+            BootSource::ExternalRom => 1,
+        });
+        self.devices.save_state(writer);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), EmulatorError> {
+        self.dram.copy_from_slice(reader.byte_slot(DRAM_SIZE)?);
+        self.internal_sram
+            .copy_from_slice(reader.byte_slot(INTERNAL_SRAM_SIZE)?);
+        self.boot_source = match reader.u8()? {
+            0 => BootSource::InternalRom,
+            1 => BootSource::ExternalRom,
+            _ => {
+                return Err(EmulatorError::InvalidSaveState(
+                    "the boot source is unknown",
+                ))
+            }
+        };
+        self.devices.load_state(reader)?;
+        Ok(())
+    }
+}
+
 fn ensure_aligned(address: u32, width: u8, access: &'static str) -> Result<(), EmulatorError> {
     if !address.is_multiple_of(u32::from(width)) {
         return Err(memory_fault(access, address & ADDRESS_MASK, width));

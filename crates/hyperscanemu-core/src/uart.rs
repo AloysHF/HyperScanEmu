@@ -42,6 +42,22 @@ impl Uart {
         destination.clear();
         destination.append(&mut self.output);
     }
+
+    pub(crate) const STATE_SIZE: usize = 2 * 4;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.mode_control);
+        writer.u32(self.baud_rate);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        self.mode_control = reader.u32()?;
+        self.baud_rate = reader.u32()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

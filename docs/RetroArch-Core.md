@@ -82,10 +82,11 @@ cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
 - DAC FIFO audio callbacks (hardware synthesizer remains silent)
 - Full-path BIN/CUE/ZIP media loading
 - Required firmware discovery from the frontend system directory
+- Save states with a versioned `HSEM` header (format version 1)
 
 ## Current limitations
 
-- No save-state serialization or exposed memory blocks are reported yet.
+- No memory blocks are exposed yet.
 - Card image selection and atomic card saving remain frontend work.
 - Retail title/menu and gameplay have not been validated under RetroArch.
 

@@ -207,6 +207,66 @@ impl CardDevice {
     }
 }
 
+const CARD_COMMAND_SLOTS: usize = 16;
+const CARD_RESPONSE_SLOTS: usize = crate::state::COLLECTION_SLOTS;
+
+impl CardDevice {
+    pub(crate) const STATE_SIZE: usize =
+        1 + CARD_SIZE + 1 + 1 + 8 + 1 + 1 + 1 + CARD_COMMAND_SLOTS + 2 + CARD_RESPONSE_SLOTS + 4;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.bool(self.image.is_some());
+        match &self.image {
+            Some(image) => {
+                writer.byte_slot(&image.memory, CARD_SIZE);
+                writer.bool(image.dirty);
+            }
+            None => {
+                writer.byte_slot(&[], CARD_SIZE);
+                writer.bool(false);
+            }
+        }
+        writer.bool(self.line_state);
+        writer.u64(self.elapsed_cycles);
+        writer.u8(self.bit_position);
+        writer.u8(self.received_byte);
+        writer.u8(self.command.len().min(CARD_COMMAND_SLOTS) as u8);
+        writer.byte_slot(&self.command, CARD_COMMAND_SLOTS);
+        writer.u16(self.response.len().min(CARD_RESPONSE_SLOTS) as u16);
+        let response: Vec<u8> = self.response[..self.response.len().min(CARD_RESPONSE_SLOTS)]
+            .iter()
+            .map(|bit| u8::from(*bit))
+            .collect();
+        writer.byte_slot(&response, CARD_RESPONSE_SLOTS);
+        writer.u32(self.response_index as u32);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), crate::EmulatorError> {
+        let present = reader.bool()?;
+        let memory: [u8; CARD_SIZE] = reader.bytes()?;
+        let dirty = reader.bool()?;
+        self.image = present.then_some(CardImage { memory, dirty });
+        self.line_state = reader.bool()?;
+        self.elapsed_cycles = reader.u64()?;
+        self.bit_position = reader.u8()?;
+        self.received_byte = reader.u8()?;
+        let command_len = usize::from(reader.u8()?).min(CARD_COMMAND_SLOTS);
+        let command = reader.byte_slot(CARD_COMMAND_SLOTS)?;
+        self.command.clear();
+        self.command.extend_from_slice(&command[..command_len]);
+        let response_len = usize::from(reader.u16()?).min(CARD_RESPONSE_SLOTS);
+        let response = reader.byte_slot(CARD_RESPONSE_SLOTS)?;
+        self.response.clear();
+        self.response
+            .extend(response[..response_len].iter().map(|bit| *bit != 0));
+        self.response_index = reader.u32()? as usize;
+        Ok(())
+    }
+}
+
 fn calculate_crc(data: &[u8]) -> u16 {
     let mut crc = 0xffff_u16;
     for byte in data {

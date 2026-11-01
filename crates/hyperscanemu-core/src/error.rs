@@ -58,6 +58,7 @@ pub enum EmulatorError {
     UnsupportedTimerMode {
         mode: u8,
     },
+    InvalidSaveState(&'static str),
     ExecutionNotImplemented,
 }
 
@@ -127,6 +128,9 @@ impl Display for EmulatorError {
             }
             Self::UnsupportedTimerMode { mode } => {
                 write!(formatter, "unsupported timer mode {mode}")
+            }
+            Self::InvalidSaveState(reason) => {
+                write!(formatter, "invalid save state: {reason}")
             }
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")

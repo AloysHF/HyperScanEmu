@@ -157,8 +157,9 @@ by EmulatorJS.
 
 ## Saves
 
-The core does not implement save-state serialization or expose battery RAM, so
-EmulatorJS's save buttons are turned off by `"save": false` in `core.json`.
+Save states use the same versioned `HSEM` envelope as the native builds, so
+EmulatorJS's save buttons are enabled by `"save": true` in `core.json`. The
+core does not expose battery-backed card storage.
 
 ## Building the bundle
 

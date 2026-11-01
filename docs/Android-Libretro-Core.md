@@ -51,6 +51,28 @@ Each ABI produces `libhyperscanemu.so`. Rename it to
 `hyperscanemu_libretro_android.so` when installing. The release workflow packages
 these automatically.
 
+## RetroDroid
+
+The same core ships inside [RetroDroid](https://github.com/AloysHF/RetroDroid),
+the all-in-one Android app for this emulator family. RetroDroid loads
+`libhyperscanemu.so` directly (no RetroArch required) and reads the neighbouring
+`android.json` for the system profile: display names, content extensions,
+virtual-controller preset, firmware requirements and orientation.
+
+Rules the core follows for any Android host:
+
+- Firmware (`spg290.bin`, `hyperscan.bin`) is read from the directory answered
+  by `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`; the content path itself may be a
+  disposable copy in the app cache.
+- Load failures are reported with `RETRO_ENVIRONMENT_SET_MESSAGE` and the log,
+  never as a silent `false`.
+- Panics are caught at the C ABI boundary, so a bad frame cannot kill the host.
+- Save states carry an `HSEM` magic header plus a format version; states from
+  another version are rejected instead of being misread.
+- Cores are linked with 16 KB page alignment for Android 15 devices.
+- The core writes no save files of its own (there is no battery-backed storage
+  in this system); all state lives in save states.
+
 ## Notes
 
 - Retail gameplay is not yet validated on Android.

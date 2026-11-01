@@ -126,7 +126,7 @@ cat > "$OUT_DIR/core.json" <<EOF
   "options": {
     "defaultWebGL2": true
   },
-  "save": false,
+  "save": true,
   "license": "LICENSE",
   "repo": "https://github.com/AloysHF/HyperScanEmu"
 }

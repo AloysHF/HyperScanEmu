@@ -702,6 +702,200 @@ impl Timer {
     }
 }
 
+impl I2cController {
+    pub(crate) const STATE_SIZE: usize = 7 * 4 + 1 + 8 + 1 + InputState::STATE_SIZE + 2 * 4;
+
+    fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.u32(self.config);
+        writer.u32(self.irq_control);
+        writer.u32(self.clock_conf);
+        writer.u32(self.id);
+        writer.u32(self.port_addr);
+        writer.u32(self.write_data);
+        writer.u32(self.read_data);
+        writer.bool(self.remaining_cycles.is_some());
+        writer.u64(self.remaining_cycles.unwrap_or(0));
+        writer.bool(self.repeat);
+        self.input.save_state(writer);
+        for packet in self.sampled {
+            writer.byte_slot(&packet, 4);
+        }
+    }
+
+    fn load_state(&mut self, reader: &mut crate::state::StateReader) -> Result<(), EmulatorError> {
+        self.config = reader.u32()?;
+        self.irq_control = reader.u32()?;
+        self.clock_conf = reader.u32()?;
+        self.id = reader.u32()?;
+        self.port_addr = reader.u32()?;
+        self.write_data = reader.u32()?;
+        self.read_data = reader.u32()?;
+        let running = reader.bool()?;
+        let remaining = reader.u64()?;
+        self.remaining_cycles = running.then_some(remaining);
+        self.repeat = reader.bool()?;
+        self.input.load_state(reader)?;
+        for packet in &mut self.sampled {
+            packet.copy_from_slice(reader.byte_slot(4)?);
+        }
+        Ok(())
+    }
+}
+
+impl Timer {
+    pub(crate) const STATE_SIZE: usize = 1 + 4 + 4 + 4 + 2 + 4 + 4 + 8 + 8;
+
+    fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        writer.bool(self.gate_enabled);
+        writer.u32(self.control);
+        writer.u32(self.control2);
+        writer.u32(self.preload);
+        writer.u16(self.counter);
+        writer.u32(self.compare_capture);
+        writer.u32(self.upcount);
+        writer.u64(self.clock_hz);
+        writer.u64(self.phase);
+    }
+
+    fn load_state(reader: &mut crate::state::StateReader) -> Result<Self, EmulatorError> {
+        Ok(Self {
+            gate_enabled: reader.bool()?,
+            control: reader.u32()?,
+            control2: reader.u32()?,
+            preload: reader.u32()?,
+            counter: reader.u16()?,
+            compare_capture: reader.u32()?,
+            upcount: reader.u32()?,
+            clock_hz: reader.u64()?,
+            phase: reader.u64()?,
+        })
+    }
+}
+
+impl Spg290Devices {
+    pub(crate) const STATE_SIZE: usize = DacFifo::STATE_SIZE
+        + 0x1_0000 / 4 * 4
+        + CdServo::STATE_SIZE
+        + VideoController::STATE_SIZE
+        + I2cController::STATE_SIZE
+        + CardDevice::STATE_SIZE
+        + Uart::STATE_SIZE
+        + 4
+        + SYSTEM_CONFIG_REGISTER_COUNT * 4
+        + MIU_REGISTER_COUNT * 4
+        + MIU_EXTENDED_REGISTER_COUNT * 4
+        + BUFFER_CONTROL_REGISTER_COUNT * 4
+        + 4
+        + 4 * 4
+        + 2 * 4
+        + 1
+        + TIMER_COUNT * Timer::STATE_SIZE
+        + 4
+        + CLOCK_REGISTER_COUNT * 4
+        + 8;
+
+    pub(crate) fn save_state(&self, writer: &mut crate::state::StateWriter) {
+        self.audio.save_state(writer);
+        writer.u32_slots(&self.spu_registers, 0x1_0000 / 4);
+        self.cd.save_state(writer);
+        self.video.save_state(writer);
+        self.i2c.save_state(writer);
+        self.card.save_state(writer);
+        self.uart.save_state(writer);
+        writer.u32(self.gpio_output);
+        writer.u32_slots(&self.system_config_registers, SYSTEM_CONFIG_REGISTER_COUNT);
+        writer.u32_slots(&self.miu_registers, MIU_REGISTER_COUNT);
+        writer.u32_slots(&self.miu_extended_registers, MIU_EXTENDED_REGISTER_COUNT);
+        writer.u32_slots(
+            &self.buffer_control_registers,
+            BUFFER_CONTROL_REGISTER_COUNT,
+        );
+        writer.u32(self.interrupt_priority_master);
+        writer.u32_slots(&self.interrupt_priorities, 4);
+        writer.u32_slots(&self.interrupt_masks, 2);
+        writer.bool(self.gpu_software_interrupt);
+        for timer in &self.timers {
+            timer.save_state(writer);
+        }
+        writer.u32(self.timer_clock_select);
+        writer.u32_slots(&self.clock_registers, CLOCK_REGISTER_COUNT);
+        writer.u64(self.pending_interrupts);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut crate::state::StateReader,
+    ) -> Result<(), EmulatorError> {
+        self.audio.load_state(reader)?;
+        for (value, stored) in self
+            .spu_registers
+            .iter_mut()
+            .zip(reader.u32_slots(0x1_0000 / 4)?)
+        {
+            *value = stored;
+        }
+        self.cd.load_state(reader)?;
+        self.video.load_state(reader)?;
+        self.i2c.load_state(reader)?;
+        self.card.load_state(reader)?;
+        self.uart.load_state(reader)?;
+        self.gpio_output = reader.u32()?;
+        for (value, stored) in self
+            .system_config_registers
+            .iter_mut()
+            .zip(reader.u32_slots(SYSTEM_CONFIG_REGISTER_COUNT)?)
+        {
+            *value = stored;
+        }
+        for (value, stored) in self
+            .miu_registers
+            .iter_mut()
+            .zip(reader.u32_slots(MIU_REGISTER_COUNT)?)
+        {
+            *value = stored;
+        }
+        for (value, stored) in self
+            .miu_extended_registers
+            .iter_mut()
+            .zip(reader.u32_slots(MIU_EXTENDED_REGISTER_COUNT)?)
+        {
+            *value = stored;
+        }
+        for (value, stored) in self
+            .buffer_control_registers
+            .iter_mut()
+            .zip(reader.u32_slots(BUFFER_CONTROL_REGISTER_COUNT)?)
+        {
+            *value = stored;
+        }
+        self.interrupt_priority_master = reader.u32()?;
+        for (value, stored) in self
+            .interrupt_priorities
+            .iter_mut()
+            .zip(reader.u32_slots(4)?)
+        {
+            *value = stored;
+        }
+        for (value, stored) in self.interrupt_masks.iter_mut().zip(reader.u32_slots(2)?) {
+            *value = stored;
+        }
+        self.gpu_software_interrupt = reader.bool()?;
+        for timer in &mut self.timers {
+            *timer = Timer::load_state(reader)?;
+        }
+        self.timer_clock_select = reader.u32()?;
+        for (value, stored) in self
+            .clock_registers
+            .iter_mut()
+            .zip(reader.u32_slots(CLOCK_REGISTER_COUNT)?)
+        {
+            *value = stored;
+        }
+        self.pending_interrupts = reader.u64()?;
+        Ok(())
+    }
+}
+
 fn timer_address(address: u32) -> Option<(usize, u32)> {
     if !(TIMER_BASE..TIMER_BASE + TIMER_BLOCK_SIZE * TIMER_COUNT as u32).contains(&address) {
         return None;
