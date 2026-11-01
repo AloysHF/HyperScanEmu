@@ -77,14 +77,21 @@ release (≥ 4.2.3) and keep this `cores/` directory.
   EJS_core = "hyperscanemu";
   EJS_gameUrl = URL.createObjectURL(discFile);
   EJS_gameName = discFile.name;
-  EJS_biosUrl = URL.createObjectURL(firmwareZip);
   EJS_pathtodata = "data/";
   EJS_startOnLoaded = false;
+  EJS_ready = function () {
+    // Replace the BIOS step: see "Firmware" below.
+    var emulator = window.EJS_emulator;
+    emulator.downloadBios = function () {
+      return readFirmware(emulator, firmwareZip);
+    };
+  };
 </script>
 <script src="data/loader.js"></script>
 ```
 
-`site/play.html` in this repository is a complete example.
+`site/play.html` in this repository is a complete example, including the
+`readFirmware` and `writeFirmwareEntry` helpers.
 
 When the game comes from a blob URL, EmulatorJS writes it into the wasm
 filesystem under `EJS_gameName`. Set that to the original file name, extension
@@ -100,10 +107,10 @@ The HyperScan requires two legally dumped firmware images:
 | `hyperscanemu/spg290.bin` | 32768 bytes (SPG290 internal ROM) |
 | `hyperscanemu/hyperscan.bin` | 1048576 bytes (HyperScan BIOS) |
 
-EmulatorJS cannot install files into a RetroArch system directory. Instead it
-decompresses the `EJS_biosUrl` archive into the root of the wasm filesystem,
+EmulatorJS cannot install files into a RetroArch system directory. Instead the
+player writes the firmware archive into the root of the wasm filesystem,
 keeping the archive's directory entries. Package both images under a
-`hyperscanemu/` folder and pass the ZIP's blob URL as `EJS_biosUrl`:
+`hyperscanemu/` folder:
 
 ```
 hyperscan-firmware.zip
@@ -111,6 +118,13 @@ hyperscan-firmware.zip
     spg290.bin
     hyperscan.bin
 ```
+
+EmulatorJS 4.2.x writes every BIOS archive entry to the content directory
+under its bare file name, which drops the `hyperscanemu/` folder and leaves the
+core unable to find the ROMs. The player therefore replaces
+`EJS_emulator.downloadBios` on the `ready` event and writes each entry at
+`/<archive path>` with `EJS_COMPRESSION` and the wasm `FS` API, so the archive
+layout is what the core sees.
 
 The Emscripten build treats `/` as the system directory, so the archive lands
 exactly where the core expects it. Folder and file names are case-sensitive.
@@ -144,6 +158,10 @@ presents at up to 640×480. Both variants are still built because EmulatorJS pic
 the file name by WebGL2 support.
 
 The **CPU Execution Engine** option is not registered in the browser build.
+
+Core diagnostics go to `stderr`, which EmulatorJS forwards to the browser
+console. The libretro log callback is C-variadic and cannot be called from
+wasm, so the core does not use it on this target.
 
 ## Controls
 
