@@ -204,6 +204,20 @@ fn fail(message: &str) -> bool {
     false
 }
 
+/// Ask the frontend to accept XRGB8888 before any content is read.
+fn declare_pixel_format() -> bool {
+    let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
+    let Some(callback) = lock_state().environment else {
+        return false;
+    };
+    unsafe {
+        callback(
+            RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+            (&mut format as *mut u32).cast(),
+        )
+    }
+}
+
 /// Run `body`, turning a panic into `fallback`.
 ///
 /// A panic must never unwind across the C ABI: the frontend is a host process
@@ -279,14 +293,7 @@ pub extern "C" fn retro_init() {
             *lock_log_callback() = log.log;
         }
 
-        let mut format = RETRO_PIXEL_FORMAT_XRGB8888;
-        unsafe {
-            callback(
-                RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-                (&mut format as *mut u32).cast(),
-            );
-        }
-        log_info("HyperScanEmu: core initialised (XRGB8888, 44100 Hz stereo)");
+        log_info("HyperScanEmu: core initialised (44100 Hz stereo)");
     });
 }
 
@@ -517,6 +524,12 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
             return fail("HyperScan: the content path is not valid UTF-8.");
         };
         let path = PathBuf::from(path);
+
+        // Frames are emitted as XRGB8888; declare it before reading firmware
+        // or the disc so a frontend that cannot show it fails fast.
+        if !declare_pixel_format() {
+            return fail("HyperScan: this frontend does not support XRGB8888 video.");
+        }
 
         let internal = match load_firmware(INTERNAL_ROM_NAME, Some(&path)) {
             Ok(bytes) => bytes,
