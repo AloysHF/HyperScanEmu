@@ -11,11 +11,19 @@ hardware and media you own.
 
 ```bash
 cargo build -p hyperscanemu --release
-target/release/hyperscan-emu game.cue --internal-rom spg290.bin --bios hyperscan.bin
+target/release/hyperscan-emu game.cue
 ```
 
-BIN, single-track CUE, and ZIP disc packages are accepted. The firmware loader
-requires a 32 KiB SPG290 internal ROM and a 1 MiB HyperScan BIOS.
+BIN, single-track CUE, and ZIP disc packages are accepted. Firmware is loaded
+from a fixed location relative to the system directory (`system` by default):
+
+```text
+system/hyperscanemu/spg290.bin       32768 bytes
+system/hyperscanemu/hyperscan.bin  1048576 bytes
+```
+
+The directory and file names are case-sensitive. No other location or name is
+searched.
 
 ## Synopsis
 
@@ -23,7 +31,7 @@ requires a 32 KiB SPG290 internal ROM and a 1 MiB HyperScan BIOS.
 hyperscan-emu [OPTIONS] [MEDIA]
 ```
 
-There are no subcommands. With a media path, firmware flags, and no
+There are no subcommands. With a media path and no
 `--headless`/`--screenshot`/`--output`, the windowed emulator opens. This
 matches the sibling desktop frontends (Playdia, Dingoo, SPMP, Native32).
 
@@ -31,20 +39,20 @@ Examples:
 
 ```bash
 # Windowed play
-hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin
-hyperscan-emu game.cue --internal-rom spg290.bin --bios hyperscan.bin --scale 2 --fullscreen
+hyperscan-emu game.zip
+hyperscan-emu game.cue --system-dir system --scale 2 --fullscreen
 
 # Validate media only
 hyperscan-emu game.zip --inspect
 
 # Instruction trace (firmware only)
-hyperscan-emu -r spg290.bin -b hyperscan.bin --trace 200000
+hyperscan-emu --system-dir system --trace 200000
 
 # Headless run + PPM
-hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin --headless --frames 300 --output frame.ppm
+hyperscan-emu game.zip --system-dir system --headless --frames 300 --output frame.ppm
 
 # Headless PNG screenshot
-hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin -S startup.png --screenshot-frames 300
+hyperscan-emu game.zip --system-dir system -S startup.png --screenshot-frames 300
 ```
 
 ## Options
@@ -52,8 +60,7 @@ hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin -S startup.png --screensho
 | Option | Default | Description |
 |---|---:|---|
 | `<MEDIA>` | — | Path to BIN, CUE, or ZIP game media. |
-| `-r, --internal-rom <PATH>` | — | Path to the 32 KiB SPG290 internal ROM. |
-| `-b, --bios <PATH>` | — | Path to the 1 MiB HyperScan BIOS. |
+| `--system-dir <DIR>` | `system` | Directory containing the `hyperscanemu/` firmware folder. |
 | `-s, --scale <1-8>` | `1` | Initial integer window scale. |
 | `-f, --fullscreen` | off | Open a borderless desktop-sized window. |
 | `-v, --volume <0-100>` | `100` | Host audio volume; zero disables audio. |
@@ -101,7 +108,7 @@ measured frontend FPS once per second.
 ## Headless PNG capture
 
 ```bash
-hyperscan-emu game.zip -r spg290.bin -b hyperscan.bin \
+hyperscan-emu game.zip --system-dir system \
   --screenshot startup.png --screenshot-frames 300
 ```
 
@@ -116,8 +123,8 @@ and audio-device dependencies:
 
 ```text
 hyperscan-emu <media.bin|media.cue|media.zip> --inspect
-hyperscan-emu -r <internal-rom.bin> -b <bios.bin> --trace <steps>
-hyperscan-emu <media> -r <internal-rom.bin> -b <bios.bin> \
+hyperscan-emu --system-dir <DIR> --trace <steps>
+hyperscan-emu <media> --system-dir <DIR> \
   --headless --frames <N> [--output frame.ppm] [-S frame.png]
 ```
 

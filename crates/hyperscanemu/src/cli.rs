@@ -2,7 +2,8 @@
 //
 // Matches sibling desktop emulators (Playdia / Dingoo / SPMP / Native32):
 // media path is the first positional argument and there are no subcommands.
-// Firmware and diagnostic modes use named flags.
+// Firmware comes from the fixed system-directory layout; diagnostic modes use
+// named flags.
 
 use std::path::PathBuf;
 
@@ -15,13 +16,9 @@ pub(crate) struct Cli {
     /// Path to game media (BIN, CUE, or ZIP)
     pub(crate) media: Option<PathBuf>,
 
-    /// Path to the 32 KiB SPG290 internal ROM
-    #[arg(short = 'r', long = "internal-rom", value_name = "PATH")]
-    pub(crate) internal_rom: Option<PathBuf>,
-
-    /// Path to the 1 MiB HyperScan BIOS
-    #[arg(short = 'b', long = "bios", value_name = "PATH")]
-    pub(crate) bios: Option<PathBuf>,
+    /// Root that contains the hyperscanemu/ firmware folder
+    #[arg(long, value_name = "DIR", default_value = "system")]
+    pub(crate) system_dir: PathBuf,
 
     /// Initial integer window scale
     #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=8))]
@@ -67,8 +64,7 @@ pub(crate) struct Cli {
 /// Windowed frontend options resolved from [`Cli`].
 #[derive(Debug)]
 pub(crate) struct PlayOptions {
-    pub(crate) internal_rom: PathBuf,
-    pub(crate) bios: PathBuf,
+    pub(crate) system_dir: PathBuf,
     pub(crate) media: PathBuf,
     pub(crate) scale: u32,
     pub(crate) fullscreen: bool,
@@ -82,19 +78,17 @@ pub(crate) struct PlayOptions {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::*;
 
     #[test]
-    fn parses_media_and_firmware_flags() {
+    fn parses_media_and_display_flags() {
         let cli = Cli::try_parse_from([
             "hyperscanemu",
             "game.zip",
-            "--internal-rom",
-            "spg290.bin",
-            "--bios",
-            "hyperscan.bin",
+            "--system-dir",
+            "tmp/system",
             "--scale",
             "2",
             "--fullscreen",
@@ -104,8 +98,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(cli.media.as_deref(), Some(Path::new("game.zip")));
-        assert_eq!(cli.internal_rom.as_deref(), Some(Path::new("spg290.bin")));
-        assert_eq!(cli.bios.as_deref(), Some(Path::new("hyperscan.bin")));
+        assert_eq!(cli.system_dir, PathBuf::from("tmp/system"));
         assert_eq!(cli.scale, 2);
         assert!(cli.fullscreen);
         assert_eq!(cli.volume, 40);
@@ -115,41 +108,21 @@ mod tests {
     }
 
     #[test]
-    fn short_firmware_flags_are_accepted() {
-        let cli = Cli::try_parse_from([
-            "hyperscanemu",
-            "game.cue",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
-        ])
-        .unwrap();
-        assert_eq!(cli.internal_rom.as_deref(), Some(Path::new("spg290.bin")));
-        assert_eq!(cli.bios.as_deref(), Some(Path::new("hyperscan.bin")));
+    fn system_dir_defaults_to_system() {
+        let cli = Cli::try_parse_from(["hyperscanemu", "game.cue"]).unwrap();
+        assert_eq!(cli.system_dir, PathBuf::from("system"));
     }
 
     #[test]
-    fn inspect_does_not_require_firmware() {
+    fn inspect_does_not_require_firmware_or_media_flags() {
         let cli = Cli::try_parse_from(["hyperscanemu", "media.zip", "--inspect"]).unwrap();
         assert!(cli.inspect);
-        assert!(cli.internal_rom.is_none());
-        assert!(cli.bios.is_none());
         assert_eq!(cli.media.as_deref(), Some(Path::new("media.zip")));
     }
 
     #[test]
     fn trace_accepts_step_count_without_media() {
-        let cli = Cli::try_parse_from([
-            "hyperscanemu",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
-            "--trace",
-            "200000",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(["hyperscanemu", "--trace", "200000"]).unwrap();
         assert_eq!(cli.trace, Some(200_000));
         assert!(cli.media.is_none());
     }
@@ -159,10 +132,6 @@ mod tests {
         let cli = Cli::try_parse_from([
             "hyperscanemu",
             "game.zip",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
             "--headless",
             "--frames",
             "300",
@@ -178,10 +147,6 @@ mod tests {
         let shot = Cli::try_parse_from([
             "hyperscanemu",
             "game.zip",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
             "-S",
             "startup.png",
             "--screenshot-frames",
@@ -194,26 +159,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_trace_steps_and_zero_scale() {
-        assert!(Cli::try_parse_from([
-            "hyperscanemu",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
-            "--trace",
-            "0"
-        ])
-        .is_err());
-        assert!(Cli::try_parse_from([
-            "hyperscanemu",
-            "game.zip",
-            "-r",
-            "spg290.bin",
-            "-b",
-            "hyperscan.bin",
-            "--scale",
-            "0"
-        ])
-        .is_err());
+        assert!(Cli::try_parse_from(["hyperscanemu", "--trace", "0"]).is_err());
+        assert!(Cli::try_parse_from(["hyperscanemu", "game.zip", "--scale", "0"]).is_err());
     }
 }

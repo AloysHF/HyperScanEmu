@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use hyperscanemu_core::{Emulator, Firmware, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use hyperscanemu_core::{Emulator, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use hyperscanemu_media::load_disc;
 use image::{ImageFormat, RgbImage};
 use minifb::{Key, KeyRepeat, ScaleMode, Window, WindowOptions};
@@ -14,11 +14,7 @@ use crate::cli::PlayOptions;
 const FRAMES_PER_SECOND: usize = 60;
 
 pub(crate) fn run(options: PlayOptions) -> Result<()> {
-    let internal = fs::read(&options.internal_rom)
-        .with_context(|| format!("failed to read {}", options.internal_rom.display()))?;
-    let bios = fs::read(&options.bios)
-        .with_context(|| format!("failed to read {}", options.bios.display()))?;
-    let firmware = Firmware::from_parts(&internal, &bios)?;
+    let firmware = hyperscanemu_core::firmware::load(&options.system_dir)?;
     let disc = load_disc(&options.media)?;
     let mut emulator = Emulator::new(firmware);
     emulator.attach_disc(disc);
@@ -233,7 +229,7 @@ fn screen_size() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyperscanemu_core::{BIOS_ROM_SIZE, INTERNAL_ROM_SIZE};
+    use hyperscanemu_core::{Firmware, BIOS_ROM_SIZE, INTERNAL_ROM_SIZE};
 
     #[test]
     fn png_writer_preserves_native_dimensions() {

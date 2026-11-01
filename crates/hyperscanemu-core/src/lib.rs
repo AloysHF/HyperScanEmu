@@ -7,7 +7,7 @@ mod devices;
 mod disc;
 mod emulator;
 mod error;
-mod firmware;
+pub mod firmware;
 mod input;
 mod state;
 mod uart;

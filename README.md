@@ -40,11 +40,19 @@ selected strategy is low-level emulation of the firmware-visible hardware.
 
 ### Standalone Mode
 
-There are no subcommands. Pass the media path first, then firmware flags:
+There are no subcommands. Pass the media path first:
 
 ```bash
-cargo run -p hyperscanemu --release -- game.cue --internal-rom spg290.bin --bios hyperscan.bin
-cargo run -p hyperscanemu --release -- "game.zip" -r spg290.bin -b hyperscan.bin --scale 2
+cargo run -p hyperscanemu --release -- game.cue
+cargo run -p hyperscanemu --release -- "game.zip" --system-dir system --scale 2
+```
+
+Firmware is loaded from `<system-dir>/hyperscanemu/` with fixed, case-sensitive
+names:
+
+```text
+system/hyperscanemu/spg290.bin       32768 bytes
+system/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
 
 See the [Standalone Emulator](docs/Standalone-Emulator.md) guide for options,
@@ -56,9 +64,12 @@ Build the libretro core, rename it to `hyperscanemu_libretro.<ext>`, and place
 legally dumped firmware in the frontend system directory:
 
 ```text
-spg290.bin      32768 bytes
-hyperscan.bin  1048576 bytes
+<system>/hyperscanemu/spg290.bin       32768 bytes
+<system>/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
+
+The folder and file names are case-sensitive and the loader never searches
+other locations.
 
 See the [RetroArch Core](docs/RetroArch-Core.md) guide for installation,
 loading content, and current limitations. Mobile and TV targets:
@@ -67,9 +78,9 @@ loading content, and current limitations. Mobile and TV targets:
 ### Browser (EmulatorJS)
 
 Open <https://AloysHF.github.io/HyperScanEmu/play.html>, pick a firmware ZIP
-containing `spg290.bin` and `hyperscan.bin`, then a `.bin` or CUE/BIN `.zip`
-disc image. Both run locally in the browser through the HyperScanEmu
-WebAssembly core; nothing is uploaded. See the
+containing `hyperscanemu/spg290.bin` and `hyperscanemu/hyperscan.bin`, then a
+`.bin` or CUE/BIN `.zip` disc image. Both run locally in the browser through the
+HyperScanEmu WebAssembly core; nothing is uploaded. See the
 [EmulatorJS Core](docs/EmulatorJS-Core.md) guide for embedding the core in your
 own EmulatorJS deployment, bundle contents, firmware placement, and controls.
 
@@ -77,10 +88,10 @@ own EmulatorJS deployment, bundle contents, firmware placement, and controls.
 
 ```bash
 cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
-cargo run -p hyperscanemu -- -r <internal-rom.bin> -b <bios.bin> --trace <steps>
-cargo run -p hyperscanemu -- <media> -r <internal-rom.bin> -b <bios.bin> \
+cargo run -p hyperscanemu -- --system-dir system --trace <steps>
+cargo run -p hyperscanemu -- <media> --system-dir system \
   --headless --frames <N> --output frame.ppm
-cargo run -p hyperscanemu -- <media> -r <internal-rom.bin> -b <bios.bin> \
+cargo run -p hyperscanemu -- <media> --system-dir system \
   -S startup.png --screenshot-frames 300
 ```
 

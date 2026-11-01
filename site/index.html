@@ -376,14 +376,14 @@
               <span class="qs-num">2</span>
               <div>
                 <p data-i18n="qs-standalone-2">准备固件与镜像</p>
-                <code>spg290.bin · hyperscan.bin · game.cue</code>
+                <code>system/hyperscanemu/{spg290.bin, hyperscan.bin} · game.cue</code>
               </div>
             </div>
             <div class="qs-step">
               <span class="qs-num">3</span>
               <div>
                 <p data-i18n="qs-standalone-3">启动游戏</p>
-                <code>hyperscan-emu game.cue -r spg290.bin -b hyperscan.bin</code>
+                <code>hyperscan-emu game.cue --system-dir system</code>
               </div>
             </div>
           </div>
@@ -405,7 +405,7 @@
               <span class="qs-num">2</span>
               <div>
                 <p data-i18n="qs-retro-2">放置固件到 system 目录</p>
-                <code>spg290.bin (32 KiB) · hyperscan.bin (1 MiB)</code>
+                <code>system/hyperscanemu/spg290.bin · hyperscan.bin</code>
               </div>
             </div>
             <div class="qs-step">
@@ -434,14 +434,14 @@
               <span class="qs-num">2</span>
               <div>
                 <p data-i18n="qs-diag-2">指令级追踪</p>
-                <code>hyperscan-emu -r spg290.bin -b hyperscan.bin --trace 200000</code>
+                <code>hyperscan-emu --system-dir system --trace 200000</code>
               </div>
             </div>
             <div class="qs-step">
               <span class="qs-num">3</span>
               <div>
                 <p data-i18n="qs-diag-3">无头帧捕获</p>
-                <code>hyperscan-emu media -r spg290.bin -b hyperscan.bin --headless --frames 5000 --output frame.ppm</code>
+                <code>hyperscan-emu media --system-dir system --headless --frames 5000 --output frame.ppm</code>
               </div>
             </div>
           </div>

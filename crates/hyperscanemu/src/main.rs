@@ -26,15 +26,7 @@ fn main() -> Result<()> {
     }
 
     if let Some(steps) = args.trace {
-        let internal_rom = args
-            .internal_rom
-            .as_deref()
-            .context("--trace requires --internal-rom <PATH>")?;
-        let bios = args
-            .bios
-            .as_deref()
-            .context("--trace requires --bios <PATH>")?;
-        trace(internal_rom, bios, steps)?;
+        trace(&args.system_dir, steps)?;
         return Ok(());
     }
 
@@ -42,14 +34,6 @@ fn main() -> Result<()> {
         .media
         .as_deref()
         .context("provide a media path (BIN, CUE, or ZIP)")?;
-    let internal_rom = args
-        .internal_rom
-        .as_deref()
-        .context("provide --internal-rom <PATH> (32 KiB SPG290 internal ROM)")?;
-    let bios = args
-        .bios
-        .as_deref()
-        .context("provide --bios <PATH> (1 MiB HyperScan BIOS)")?;
 
     if args.headless || args.screenshot.is_some() || args.output.is_some() {
         let frames = args
@@ -57,8 +41,7 @@ fn main() -> Result<()> {
             .as_ref()
             .map_or(args.frames, |_| args.screenshot_frames);
         run_headless(
-            internal_rom,
-            bios,
+            &args.system_dir,
             media,
             frames,
             args.output.as_deref(),
@@ -68,8 +51,7 @@ fn main() -> Result<()> {
     }
 
     let options = PlayOptions {
-        internal_rom: internal_rom.to_path_buf(),
-        bios: bios.to_path_buf(),
+        system_dir: args.system_dir.clone(),
         media: media.to_path_buf(),
         scale: args.scale,
         fullscreen: args.fullscreen,
@@ -94,14 +76,13 @@ fn inspect_disc(media: &Path) -> Result<()> {
 }
 
 fn run_headless(
-    internal_rom: &Path,
-    bios: &Path,
+    system_dir: &Path,
     media: &Path,
     frames: u64,
     output: Option<&Path>,
     screenshot: Option<&Path>,
 ) -> Result<()> {
-    let firmware = load_firmware(internal_rom, bios)?;
+    let firmware = load_firmware(system_dir)?;
     let disc = load_disc(media)?;
     let mut emulator = Emulator::new(firmware);
     emulator.attach_disc(disc);
@@ -139,8 +120,8 @@ fn run_headless(
     Ok(())
 }
 
-fn trace(internal_rom: &Path, bios: &Path, steps: u64) -> Result<()> {
-    let firmware = load_firmware(internal_rom, bios)?;
+fn trace(system_dir: &Path, steps: u64) -> Result<()> {
+    let firmware = load_firmware(system_dir)?;
     let mut emulator = Emulator::new(firmware);
     let start_pc = emulator.cpu().pc();
     let start_cycles = emulator.cpu().cycles();
@@ -181,11 +162,8 @@ fn trace(internal_rom: &Path, bios: &Path, steps: u64) -> Result<()> {
     Ok(())
 }
 
-fn load_firmware(internal_rom: &Path, bios: &Path) -> Result<Firmware> {
-    let internal = fs::read(internal_rom)
-        .with_context(|| format!("failed to read {}", internal_rom.display()))?;
-    let bios_data = fs::read(bios).with_context(|| format!("failed to read {}", bios.display()))?;
-    Firmware::from_parts(&internal, &bios_data).map_err(Into::into)
+fn load_firmware(system_dir: &Path) -> Result<Firmware> {
+    hyperscanemu_core::firmware::load(system_dir).map_err(Into::into)
 }
 
 fn print_run_summary(emulator: &Emulator, frames: u64) -> Result<()> {

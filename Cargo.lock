@@ -494,6 +494,7 @@ name = "hyperscanemu-core"
 version = "0.1.0"
 dependencies = [
  "cargo-husky",
+ "tempfile",
 ]
 
 [[package]]
