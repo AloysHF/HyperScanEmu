@@ -53,9 +53,17 @@ type AudioCallback = unsafe extern "C" fn(left: i16, right: i16);
 type AudioBatchCallback = unsafe extern "C" fn(data: *const i16, frames: usize) -> usize;
 type InputPollCallback = unsafe extern "C" fn();
 type InputStateCallback = unsafe extern "C" fn(port: u32, device: u32, index: u32, id: u32) -> i16;
-type LogCallback = unsafe extern "C" fn(level: u32, format: *const c_char, ...);
+/// Frontend logging callback.
+///
+/// libretro declares it C-variadic, but over wasm the callee signature carries
+/// a hidden varargs pointer, so calling it from Rust traps with "function
+/// signature mismatch". Native builds call it with the message as the format
+/// string and no arguments; Emscripten builds log to stderr instead.
+#[cfg(not(target_os = "emscripten"))]
+type LogCallback = unsafe extern "C" fn(level: u32, format: *const c_char);
 
 /// RETRO_ENVIRONMENT_GET_LOG_INTERFACE payload.
+#[cfg(not(target_os = "emscripten"))]
 #[repr(C)]
 pub struct RetroLogCallback {
     log: Option<LogCallback>,
@@ -135,12 +143,14 @@ static STATE: Mutex<RetroState> = Mutex::new(RetroState::new());
 
 /// The frontend log callback lives in its own lock so diagnostics can be
 /// emitted while `STATE` is held (for example while validating a save state).
+#[cfg(not(target_os = "emscripten"))]
 static LOG_CALLBACK: Mutex<Option<LogCallback>> = Mutex::new(None);
 
 fn lock_state() -> std::sync::MutexGuard<'static, RetroState> {
     STATE.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
+#[cfg(not(target_os = "emscripten"))]
 fn lock_log_callback() -> std::sync::MutexGuard<'static, Option<LogCallback>> {
     LOG_CALLBACK
         .lock()
@@ -150,12 +160,23 @@ fn lock_log_callback() -> std::sync::MutexGuard<'static, Option<LogCallback>> {
 /// Write a diagnostic to the frontend's log. Frontends without a log
 /// interface simply have nothing to write to.
 fn log_message(level: u32, message: &str) {
-    let Ok(text) = CString::new(message) else {
-        return;
-    };
-    let callback = *lock_log_callback();
-    if let Some(callback) = callback {
-        unsafe { callback(level, c"%s".as_ptr(), text.as_ptr()) };
+    // EmulatorJS forwards stderr to the browser console.
+    #[cfg(target_os = "emscripten")]
+    {
+        let _ = level;
+        eprintln!("{message}");
+    }
+
+    // The message itself is the format string, so percent signs have to be
+    // escaped before reaching the frontend's printf.
+    #[cfg(not(target_os = "emscripten"))]
+    unsafe {
+        let Ok(text) = CString::new(message.replace('%', "%%")) else {
+            return;
+        };
+        if let Some(callback) = *lock_log_callback() {
+            callback(level, text.as_ptr());
+        }
     }
 }
 
@@ -281,14 +302,17 @@ pub extern "C" fn retro_init() {
             return;
         };
 
-        let mut log = RetroLogCallback { log: None };
-        if unsafe {
-            callback(
-                RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
-                (&mut log as *mut RetroLogCallback).cast(),
-            )
-        } {
-            *lock_log_callback() = log.log;
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let mut log = RetroLogCallback { log: None };
+            if unsafe {
+                callback(
+                    RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+                    (&mut log as *mut RetroLogCallback).cast(),
+                )
+            } {
+                *lock_log_callback() = log.log;
+            }
         }
 
         log_info("HyperScanEmu: core initialised (44100 Hz stereo)");
