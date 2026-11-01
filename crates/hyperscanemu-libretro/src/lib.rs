@@ -194,6 +194,9 @@ fn show_message(message: &str, frames: u32) {
     }
 }
 
+const MISSING_CONTENT_PATH: &str =
+    "The frontend passed no content path; this core loads content from a file path only.";
+
 /// Report a failure the user can act on, both on screen and in the log.
 fn fail(message: &str) -> bool {
     log_error(message);
@@ -505,10 +508,10 @@ pub extern "C" fn retro_cheat_set(_index: u32, _enabled: bool, _code: *const c_c
 pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
     guard(false, || unsafe {
         let Some(game) = game.as_ref() else {
-            return fail("HyperScan: the frontend passed no content information.");
+            return fail(MISSING_CONTENT_PATH);
         };
         if game.path.is_null() {
-            return fail("HyperScan: the frontend passed no content path.");
+            return fail(MISSING_CONTENT_PATH);
         }
         let Ok(path) = CStr::from_ptr(game.path).to_str() else {
             return fail("HyperScan: the content path is not valid UTF-8.");
