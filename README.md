@@ -1,6 +1,10 @@
 # HyperScanEmu — A Mattel HyperScan emulator written in Rust
 
 <p align="center">
+  <img src="res/logo-banner.png" alt="HyperScanEmu" width="600">
+</p>
+
+<p align="center">
   <a href="https://aloyshf.github.io/HyperScanEmu/"><img src="https://img.shields.io/badge/Website-HyperScanEmu-E8553A?logo=githubpages&logoColor=white" alt="Website"></a>
   <a href="https://github.com/AloysHF/HyperScanEmu/actions/workflows/ci.yml"><img src="https://github.com/AloysHF/HyperScanEmu/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://git.libretro.com/libretro/hyperscanemu/-/pipelines"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgit.libretro.com%2Fapi%2Fv4%2Fprojects%2Flibretro%252Fhyperscanemu%2Fpipelines%2Flatest%3Fref%3Dmaster&query=%24.status&label=Pipeline%20Status&logo=gitlab&cacheSeconds=300" alt="Gitlab Pipeline Status" ></a>
