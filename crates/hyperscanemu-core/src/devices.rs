@@ -21,6 +21,8 @@ const SPU_BASE: u32 = 0x0805_0000;
 const SPU_END: u32 = 0x0805_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
+const SD_BASE: u32 = 0x0818_0000;
+const SD_STATUS_TIMEOUT: u32 = 1 << 10;
 const C3_STUB_START: u32 = 0x0824_0000;
 const C3_STUB_END: u32 = 0x0824_ffff;
 const TIMER_BASE: u32 = 0x0816_0000;
@@ -138,6 +140,16 @@ impl Spg290Devices {
         if let Some(value) = self.video.read(address) {
             return Ok(value);
         }
+        if (SD_BASE..SD_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // SD-card controller: the retail titles probe it for a memory
+            // card. No card is modeled, so the status register reports a
+            // command timeout and every other register reads back as zero.
+            return Ok(if address == SD_BASE + 0x14 {
+                SD_STATUS_TIMEOUT
+            } else {
+                0
+            });
+        }
         if (CD_BASE..=CD_END).contains(&address) {
             return self
                 .cd
@@ -223,6 +235,10 @@ impl Spg290Devices {
             if !self.video.interrupt_pending() {
                 self.pending_interrupts &= !(1_u64 << PPU_INTERRUPT_SOURCE);
             }
+            return Ok(());
+        }
+        if (SD_BASE..SD_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // SD-card controller probes: accept the writes; no card responds.
             return Ok(());
         }
         if (CD_BASE..=CD_END).contains(&address) {

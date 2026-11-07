@@ -394,7 +394,14 @@ impl Bus {
 
     pub fn service_cd(&mut self, disc: &DiscImage) -> Result<(), EmulatorError> {
         while let Some(request) = self.devices.take_cd_dma_request() {
-            let sector = disc.read_raw_sector(request.lba)?;
+            // Reads past the program area land in the lead-out track,
+            // whose sectors are zero-filled; the image itself ends there.
+            static ZERO_SECTOR: [u8; 2352] = [0; 2352];
+            let sector: &[u8] = match disc.read_raw_sector(request.lba) {
+                Ok(sector) => sector,
+                Err(EmulatorError::DiscSectorOutOfRange { .. }) => &ZERO_SECTOR,
+                Err(error) => return Err(error),
+            };
             if self.bios_trace.is_enabled() && request.buffer_pointer < crate::GAME_ENTRY_PHYSICAL {
                 eprintln!(
                     "[cd-dma] low-destination load: lba {} -> {:08x}, {} sector(s)",
