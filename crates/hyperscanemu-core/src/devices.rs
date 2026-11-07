@@ -362,6 +362,11 @@ impl Spg290Devices {
         self.cd.set_disc(sector_count);
     }
 
+    /// Overwrite the CD servo state (HLE boot initialization).
+    pub fn set_cd_servo_state(&mut self, state: crate::CdServoState) {
+        self.cd.set_servo_state(state);
+    }
+
     pub(crate) fn cd_command_trace(&self) -> Vec<CdCommandTrace> {
         self.cd.command_trace()
     }

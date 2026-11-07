@@ -4,7 +4,7 @@ use std::ptr;
 use std::sync::Mutex;
 
 use hyperscanemu_core::{
-    firmware, ControllerButton, ControllerState, Emulator, InputState, BIOS_ROM_SIZE,
+    firmware, BootMode, ControllerButton, ControllerState, Emulator, InputState, BIOS_ROM_SIZE,
     DISPLAY_HEIGHT, DISPLAY_WIDTH, INTERNAL_ROM_SIZE,
 };
 use hyperscanemu_media::load_disc;
@@ -378,7 +378,9 @@ pub extern "C" fn retro_set_controller_port_device(_port: u32, _device: u32) {
 pub extern "C" fn retro_reset() {
     guard((), || {
         if let Some(emulator) = &mut lock_state().emulator {
-            emulator.reset();
+            if let Err(error) = emulator.reset() {
+                log_error(&format!("HyperScanEmu: reset failed: {error}"));
+            }
         }
     });
 }
@@ -560,10 +562,7 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
             Ok(root) => root,
             Err(error) => return fail(&firmware_location_error(&error)),
         };
-        let firmware = match firmware::load(&root) {
-            Ok(firmware) => firmware,
-            Err(error) => return fail(&firmware_location_error(&error.to_string())),
-        };
+        let firmware = firmware::load(&root).ok();
         let disc = match load_disc(&path) {
             Ok(disc) => disc,
             Err(error) => {
@@ -574,8 +573,22 @@ pub unsafe extern "C" fn retro_load_game(game: *const RetroGameInfo) -> bool {
             }
         };
 
-        let mut emulator = Emulator::new(firmware);
+        let mut emulator = match firmware {
+            Some(firmware) => Emulator::new(firmware),
+            None => {
+                log_info(
+                    "HyperScanEmu: firmware not found; booting through the HLE path \
+                     (gameplay may require firmware-resident services).",
+                );
+                Emulator::new_hle()
+            }
+        };
         emulator.attach_disc(disc);
+        if emulator.boot_mode() == BootMode::Hle {
+            if let Err(error) = emulator.boot_hle() {
+                return fail(&format!("HyperScan: HLE boot failed.\n{error}"));
+            }
+        }
         lock_state().emulator = Some(emulator);
         log_info(&format!("HyperScanEmu: loaded {}", path.display()));
         true
