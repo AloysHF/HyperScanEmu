@@ -13,7 +13,8 @@ const RECORD_LBA_FIELD: usize = 2;
 const RECORD_SIZE_FIELD: usize = 10;
 const RECORD_FLAGS_FIELD: usize = 25;
 const RECORD_NAME_LENGTH_FIELD: usize = 32;
-const DIRECTORY_FLAG: u8 = 1;
+/// ISO 9660 file flags: bit 1 marks a directory (bit 0 is hidden).
+const DIRECTORY_FLAG: u8 = 1 << 1;
 
 /// Location of a file on the disc image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +287,14 @@ mod tests {
         let file = find_file(&disc, "hyper.exe").unwrap();
         assert_eq!(file.size, data.len() as u32);
         assert_eq!(read_file(&disc, file).unwrap(), data);
+    }
+
+    #[test]
+    fn finds_files_inside_a_subdirectory() {
+        let disc = synthetic_disc(&[("NESTED.TXT", b"content")]);
+        // The fixture lays files flat in the root; a two-component path must
+        // fail unless the intermediate component is a directory.
+        assert!(find_file(&disc, "missing/NESTED.TXT").is_err());
     }
 
     #[test]

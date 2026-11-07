@@ -12,11 +12,15 @@ pub mod firmware;
 pub mod hle_boot;
 mod input;
 pub mod iso9660;
+pub mod resident_services;
 mod state;
 mod uart;
 mod video;
 
-pub use bios_trace::{BiosActivity, GAME_ENTRY_PHYSICAL, TRACE_ENV_VAR};
+pub use bios_trace::{
+    BiosActivity, FetchEvent, GAME_ENTRY_PHYSICAL, RESIDENT_DATA_END, RESIDENT_DATA_START,
+    SERVICE_TRACE_ENV_VAR, TRACE_ENV_VAR,
+};
 pub use bus::{BootSource, Bus, ADDRESS_MASK, DRAM_SIZE, INTERNAL_SRAM_SIZE};
 pub use card::{CardImage, CARD_SIZE};
 pub use cdrom::{CdCommandKind, CdCommandTrace, CdServoState};

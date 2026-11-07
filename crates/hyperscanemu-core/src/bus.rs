@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
 
 use crate::{
-    video::rgb565_to_xrgb8888, BiosActivity, CardImage, DiscImage, EmulatorError, Firmware,
-    InputState, Spg290Devices,
+    video::rgb565_to_xrgb8888, BiosActivity, CardImage, DiscImage, EmulatorError, FetchEvent,
+    Firmware, InputState, Spg290Devices,
 };
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
@@ -36,6 +36,7 @@ pub struct Bus {
     devices: Spg290Devices,
     bios_trace: BiosActivity,
     handoff_dram: Option<Vec<u8>>,
+    execution_pc: u32,
 }
 
 impl Bus {
@@ -58,6 +59,7 @@ impl Bus {
             devices: Spg290Devices::new(),
             bios_trace: BiosActivity::new(),
             handoff_dram: None,
+            execution_pc: 0,
         }
     }
 
@@ -80,10 +82,23 @@ impl Bus {
     pub fn read_u8(&self, address: u32) -> Result<u8, EmulatorError> {
         let address = address & ADDRESS_MASK;
         match address {
-            0..=DRAM_END => Ok(self.dram[address as usize % DRAM_SIZE]),
+            0..=DRAM_END => {
+                let value = self.dram[address as usize % DRAM_SIZE];
+                if (crate::RESIDENT_DATA_START..crate::RESIDENT_DATA_END).contains(&address)
+                    && self.bios_trace.is_enabled()
+                {
+                    self.bios_trace
+                        .note_resident_data_read(self.execution_pc, address, value);
+                }
+                Ok(value)
+            }
             MMIO_START..=MMIO_END => {
                 let shift = (address & 3) * 8;
-                Ok((self.devices.read_u32(address & !3)? >> shift) as u8)
+                let value = (self.devices.read_u32(address & !3)? >> shift) as u8;
+                if self.bios_trace.is_enabled() {
+                    self.bios_trace.note_mmio_read(address & !3, value);
+                }
+                Ok(value)
             }
             INTERNAL_SRAM_START..=0x0a00_3fff => {
                 Ok(self.internal_sram[(address - INTERNAL_SRAM_START) as usize])
@@ -111,7 +126,11 @@ impl Bus {
         ensure_aligned(address, 4, "read")?;
         let masked = address & ADDRESS_MASK;
         if (MMIO_START..=MMIO_END).contains(&masked) {
-            return self.devices.read_u32(masked);
+            let value = self.devices.read_u32(masked)?;
+            if self.bios_trace.is_enabled() {
+                self.bios_trace.note_mmio_read(masked, 0);
+            }
+            return Ok(value);
         }
         let bytes = [
             self.read_u8(address)?,
@@ -133,6 +152,14 @@ impl Bus {
         }
         match address {
             0..=DRAM_END => {
+                if (address == 0x0015_1828 || address == 0x0004_1720)
+                    && self.bios_trace.is_enabled()
+                {
+                    eprintln!(
+                        "[watch] write {:02x} at {address:06x} pc={:08x}",
+                        value, self.execution_pc
+                    );
+                }
                 self.dram[address as usize % DRAM_SIZE] = value;
                 Ok(())
             }
@@ -224,6 +251,11 @@ impl Bus {
         self.devices.eject_card()
     }
 
+    /// Initialize the CD servo to the firmware's post-identification state.
+    pub fn initialize_cd_servo(&mut self, state: crate::CdServoState) {
+        self.devices.set_cd_servo_state(state);
+    }
+
     pub fn set_disc(&mut self, disc: Option<&DiscImage>) {
         self.devices.set_disc(disc.map(DiscImage::sector_count));
     }
@@ -233,6 +265,7 @@ impl Bus {
     }
 
     pub(crate) fn set_execution_context(&mut self, pc: u32, link: u32) {
+        self.execution_pc = pc & ADDRESS_MASK;
         self.devices.set_execution_context(pc, link);
     }
 
@@ -241,9 +274,13 @@ impl Bus {
     }
 
     /// Feed one instruction fetch into the firmware activity trace.
-    /// Returns `true` on the BIOS-to-game handoff transition.
-    pub fn begin_bios_fetch(&mut self, fetch_word: u32, cycles: u64) -> bool {
+    pub fn begin_bios_fetch(&mut self, fetch_word: u32, cycles: u64) -> FetchEvent {
         self.bios_trace.note_fetch(fetch_word, cycles)
+    }
+
+    /// Whether per-call service register dumps should be printed.
+    pub fn bios_trace_service_logging(&self) -> bool {
+        self.bios_trace.service_trace()
     }
 
     /// Close the instruction fetch opened by [`Bus::begin_bios_fetch`].
@@ -267,6 +304,21 @@ impl Bus {
     /// Take the captured handoff DRAM image, if any.
     pub fn take_handoff_dram(&mut self) -> Option<Vec<u8>> {
         self.handoff_dram.take()
+    }
+
+    /// Copy of the current DRAM contents for end-of-run diagnostics.
+    pub fn dram_contents(&self) -> Vec<u8> {
+        self.dram.to_vec()
+    }
+
+    /// First-read samples of the resident data area for the diff oracle.
+    pub fn resident_data_samples(&self) -> Vec<((u32, u32), u8)> {
+        self.bios_trace.resident_data_samples()
+    }
+
+    /// Top polled MMIO addresses (poll profiling).
+    pub fn mmio_read_summary(&self) -> Vec<(u32, u64)> {
+        self.bios_trace.mmio_read_summary()
     }
 
     /// Append bus-visible state (boot source, MMIO registers, DRAM page

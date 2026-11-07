@@ -119,6 +119,22 @@ impl Score7 {
         Ok(())
     }
 
+    /// Compact register dump for service-call tracing: the argument and
+    /// link registers plus the firmware context pointer.
+    fn service_register_dump(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = String::new();
+        for index in 0..8 {
+            let _ = write!(text, "r{index}={:08x} ", self.registers[index]);
+        }
+        let _ = write!(
+            text,
+            "r28={:08x} r29={:08x}",
+            self.registers[28], self.registers[29]
+        );
+        text
+    }
+
     /// One-line CPU state dump for the firmware activity handoff snapshot.
     fn handoff_cpu_dump(&self) -> String {
         use std::fmt::Write as _;
@@ -160,11 +176,44 @@ impl Score7 {
             });
         }
         let fetch_word = self.pc & !3;
-        if bus.begin_bios_fetch(fetch_word, self.cycles) {
-            let mut snapshot = self.handoff_cpu_dump();
-            bus.append_handoff_snapshot(&mut snapshot);
-            bus.capture_handoff_dram();
-            eprintln!("{snapshot}");
+        match bus.begin_bios_fetch(fetch_word, self.cycles) {
+            crate::FetchEvent::Handoff => {
+                let mut snapshot = self.handoff_cpu_dump();
+                bus.append_handoff_snapshot(&mut snapshot);
+                bus.capture_handoff_dram();
+                eprintln!("{snapshot}");
+            }
+            crate::FetchEvent::ResidentEnter if bus.bios_trace_service_logging() => {
+                let entry = fetch_word & crate::ADDRESS_MASK;
+                eprintln!(
+                    "[svc-in] pc={entry:04x} cycles={} {}",
+                    self.cycles,
+                    self.service_register_dump()
+                );
+                if entry == 0x89c {
+                    for index in [1usize, 4] {
+                        if let Some(address) = self.register(index) {
+                            let bytes: Vec<String> = (0..64u32)
+                                .filter_map(|offset| {
+                                    bus.read_u8(address.wrapping_add(offset))
+                                        .ok()
+                                        .map(|byte| format!("{byte:02x}"))
+                                })
+                                .collect();
+                            eprintln!("[svc-arg] r{index}={address:08x} {}", bytes.join(""));
+                        }
+                    }
+                }
+            }
+            crate::FetchEvent::ResidentExit if bus.bios_trace_service_logging() => {
+                eprintln!(
+                    "[svc-out] to={:04x} cycles={} {}",
+                    fetch_word & crate::ADDRESS_MASK,
+                    self.cycles,
+                    self.service_register_dump()
+                );
+            }
+            _ => {}
         }
         let raw = bus.read_u32(fetch_word)?;
         bus.end_bios_fetch();

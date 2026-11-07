@@ -35,6 +35,11 @@ pub struct Emulator {
     bus: Bus,
     disc: Option<DiscImage>,
     boot_mode: BootMode,
+    resident: crate::resident_services::ResidentServices,
+    pc_profile: std::collections::HashMap<u32, u64>,
+    state_dump_pc: std::sync::OnceLock<Option<u32>>,
+    state_dumped: bool,
+    stack_probe: std::sync::OnceLock<bool>,
     framebuffer: Vec<u32>,
     audio_samples: Vec<i16>,
     uart_output: Vec<u8>,
@@ -60,6 +65,11 @@ impl Emulator {
             bus,
             disc: None,
             boot_mode,
+            resident: crate::resident_services::ResidentServices::new(),
+            pc_profile: std::collections::HashMap::new(),
+            state_dump_pc: std::sync::OnceLock::new(),
+            state_dumped: false,
+            stack_probe: std::sync::OnceLock::new(),
             framebuffer: vec![0; INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
             uart_output: Vec::new(),
@@ -159,6 +169,20 @@ impl Emulator {
         self.bus.take_handoff_dram()
     }
 
+    /// First-read samples of the firmware-resident data area (diff oracle).
+    pub fn resident_data_samples(&self) -> Vec<((u32, u32), u8)> {
+        self.bus.resident_data_samples()
+    }
+
+    /// Top executed PCs when `HYPERSCANEMU_PC_PROFILE` is set.
+    pub fn pc_profile_summary(&self) -> Vec<(u32, u64)> {
+        let mut entries: Vec<(u32, u64)> =
+            self.pc_profile.iter().map(|(pc, n)| (*pc, *n)).collect();
+        entries.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
+        entries.truncate(24);
+        entries
+    }
+
     pub fn cpu(&self) -> &Score7 {
         &self.cpu
     }
@@ -168,8 +192,83 @@ impl Emulator {
     }
 
     pub fn step(&mut self) -> Result<StepOutcome, EmulatorError> {
+        if self
+            .stack_probe
+            .get_or_init(|| std::env::var_os("HYPERSCANEMU_STACK_PROBE").is_some())
+            == &true
+            && !self.state_dumped
+            && self.boot_mode == BootMode::Hle
+        {
+            let sp = self.cpu.register(0).unwrap_or(0);
+            if sp != 0 && sp < 0x0100_0000 {
+                let registers = (0..32)
+                    .filter_map(|index| {
+                        let value = self.cpu.register(index)?;
+                        Some(format!("r{index}={value:08x}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "[stack-probe] r0 broken: sp={sp:08x} pc={:08x} cr3={:08x}",
+                    self.cpu.pc(),
+                    self.cpu
+                        .control_register(crate::cpu::CR_EXCEPTION_VECTOR)
+                        .unwrap_or(0)
+                );
+                eprintln!("registers: {registers}");
+                self.state_dumped = true;
+            }
+        }
+        if let Some(target) = *self.state_dump_pc.get_or_init(|| {
+            std::env::var("HYPERSCANEMU_STATE_DUMP_AT_PC")
+                .ok()
+                .and_then(|value| u32::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        }) {
+            if !self.state_dumped && self.cpu.pc() & crate::ADDRESS_MASK == target {
+                if let Ok(path) = std::env::var("HYPERSCANEMU_STATE_DUMP_PATH") {
+                    let _ = std::fs::write(path, self.serialize());
+                    eprintln!("[state-dump] wrote state at PC {target:08x}");
+                }
+                self.state_dumped = true;
+            }
+        }
+        if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+            let count = self.pc_profile.entry(self.cpu.pc() & !1).or_insert(0);
+            *count += 1;
+        }
         self.bus
             .set_execution_context(self.cpu.pc(), self.cpu.register(3).unwrap_or(0));
+        if self.boot_mode == BootMode::Hle {
+            use crate::resident_services::{ResidentFetch, ResidentServices};
+            match ResidentServices::classify(self.cpu.pc() & crate::ADDRESS_MASK) {
+                Some(ResidentFetch::IrqReturn) => {
+                    self.resident.return_from_irq(&mut self.cpu, &mut self.bus);
+                }
+                Some(ResidentFetch::Service(entry)) => {
+                    self.resident.handle_service(
+                        &mut self.cpu,
+                        &mut self.bus,
+                        self.disc.as_ref(),
+                        entry,
+                    )?;
+                }
+                Some(ResidentFetch::Unhandled(pc)) => {
+                    let cause = self.cpu.control_register(crate::cpu::CR_ECR).unwrap_or(0);
+                    let registers = (0..32)
+                        .filter_map(|index| {
+                            let value = self.cpu.register(index)?;
+                            Some(format!("r{index}={value:08x}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    eprintln!("[svc-unhandled] pc={pc:04x} ecr={cause:08x} {}", registers);
+                    return Err(EmulatorError::Resident(
+                        crate::resident_services::ResidentError::UnhandledResidentEntry { pc },
+                    ));
+                }
+                None => {}
+            }
+        }
         let outcome = self.cpu.step(&mut self.bus)?;
         if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
             self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
@@ -180,7 +279,12 @@ impl Emulator {
         let pending = self.bus.take_pending_interrupts();
         for source in 1..64 {
             if pending & (1_u64 << source) != 0 {
-                self.cpu.request_interrupt(source)?;
+                if self.boot_mode == BootMode::Hle {
+                    self.resident
+                        .deliver_irq(&mut self.cpu, &mut self.bus, source);
+                } else {
+                    self.cpu.request_interrupt(source)?;
+                }
             }
         }
         Ok(outcome)

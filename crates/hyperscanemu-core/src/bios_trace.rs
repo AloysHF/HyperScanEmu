@@ -6,12 +6,17 @@
 //! much firmware behavior an HLE boot path would have to reproduce.
 //! Disabled runs only pay a single branch per instruction.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Environment variable that enables the trace. No value is required.
 pub const TRACE_ENV_VAR: &str = "HYPERSCANEMU_TRACE_BIOS_FETCH";
+
+/// Environment variable that additionally logs every crossing between the
+/// game image and the firmware-resident DRAM with a CPU register dump.
+pub const SERVICE_TRACE_ENV_VAR: &str = "HYPERSCANEMU_TRACE_SERVICE_CALLS";
 
 /// HYPER.EXE entry point documented by the SPG290 SDK linker script
 /// (`0xA0091000`, which aliases to this DRAM offset).
@@ -30,6 +35,11 @@ const POST_HANDOFF_FETCH_CAP: usize = 32;
 const POST_HANDOFF_READ_CAP: usize = 32;
 /// Distinct DRAM service entries recorded after the handoff.
 const POST_HANDOFF_SERVICE_CAP: usize = 64;
+/// First-read resident data samples kept for the LLE/HLE diff oracle.
+const RESIDENT_DATA_SAMPLE_CAP: usize = 20000;
+/// Guest DRAM range holding the firmware-resident data area.
+pub const RESIDENT_DATA_START: u32 = 0x0004_0000;
+pub const RESIDENT_DATA_END: u32 = 0x0005_6000;
 
 /// DRAM addresses at or above this line belong to the loaded game image
 /// (HYPER.EXE at 0x000901FC with entry 0x00091000).
@@ -123,10 +133,24 @@ impl Clone for RomDataTrace {
     }
 }
 
+/// What [`BiosActivity::note_fetch`] observed about one instruction fetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchEvent {
+    /// Nothing notable.
+    None,
+    /// This fetch is the BIOS-to-game handoff transition.
+    Handoff,
+    /// Execution crossed from the game image into resident firmware DRAM.
+    ResidentEnter,
+    /// Execution crossed from resident firmware DRAM back to the game image.
+    ResidentExit,
+}
+
 /// Accumulated firmware activity measurements for one boot.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct BiosActivity {
     enabled: bool,
+    service_trace: bool,
     instructions: u64,
     fetches_bios: u64,
     fetches_internal: u64,
@@ -142,14 +166,58 @@ pub struct BiosActivity {
     /// Fetch PCs of crossings from game DRAM into BIOS-resident DRAM.
     post_handoff_service_entries: Vec<u32>,
     post_handoff_service_calls: u64,
+    resident_active: bool,
+    resident_calls: u64,
     previous_fetch_physical: u32,
     rom_data: RomDataTrace,
+    first_resident_data_reads: Mutex<HashMap<(u32, u32), u8>>,
+    mmio_read_counts: Mutex<HashMap<u32, u64>>,
+}
+
+impl Clone for BiosActivity {
+    fn clone(&self) -> Self {
+        Self {
+            enabled: self.enabled,
+            service_trace: self.service_trace,
+            instructions: self.instructions,
+            fetches_bios: self.fetches_bios,
+            fetches_internal: self.fetches_internal,
+            fetches_dram: self.fetches_dram,
+            handoff_seen: self.handoff_seen,
+            handoff_cycles: self.handoff_cycles,
+            handoff_pc: self.handoff_pc,
+            pre_handoff_dram_pcs: self.pre_handoff_dram_pcs.clone(),
+            post_handoff_bios_fetches: self.post_handoff_bios_fetches,
+            post_handoff_internal_fetches: self.post_handoff_internal_fetches,
+            post_handoff_bios_fetch_pcs: self.post_handoff_bios_fetch_pcs.clone(),
+            post_handoff_internal_fetch_pcs: self.post_handoff_internal_fetch_pcs.clone(),
+            post_handoff_service_entries: self.post_handoff_service_entries.clone(),
+            post_handoff_service_calls: self.post_handoff_service_calls,
+            resident_active: self.resident_active,
+            resident_calls: self.resident_calls,
+            previous_fetch_physical: self.previous_fetch_physical,
+            rom_data: self.rom_data.clone(),
+            first_resident_data_reads: Mutex::new(
+                self.first_resident_data_reads
+                    .lock()
+                    .map(|map| map.clone())
+                    .unwrap_or_default(),
+            ),
+            mmio_read_counts: Mutex::new(
+                self.mmio_read_counts
+                    .lock()
+                    .map(|map| map.clone())
+                    .unwrap_or_default(),
+            ),
+        }
+    }
 }
 
 impl BiosActivity {
     pub fn new() -> Self {
         Self {
             enabled: std::env::var_os(TRACE_ENV_VAR).is_some(),
+            service_trace: std::env::var_os(SERVICE_TRACE_ENV_VAR).is_some(),
             ..Self::default()
         }
     }
@@ -158,12 +226,17 @@ impl BiosActivity {
         self.enabled
     }
 
-    /// Record one instruction fetch. Returns `true` exactly when this fetch
-    /// is the BIOS-to-game handoff transition (first fetch of the documented
-    /// game entry point), so the caller can dump a handoff snapshot.
-    pub fn note_fetch(&mut self, pc: u32, cycles: u64) -> bool {
+    /// Whether per-call register dumps should be printed by the caller.
+    pub fn service_trace(&self) -> bool {
+        self.service_trace
+    }
+
+    /// Record one instruction fetch. Returns the notable event observed, so
+    /// the caller can dump a handoff snapshot or a service-call register
+    /// dump.
+    pub fn note_fetch(&mut self, pc: u32, cycles: u64) -> FetchEvent {
         if !self.enabled {
-            return false;
+            return FetchEvent::None;
         }
         self.instructions += 1;
         let physical = pc & crate::ADDRESS_MASK;
@@ -187,12 +260,12 @@ impl BiosActivity {
                         self.handoff_cycles = cycles;
                         self.handoff_pc = physical;
                         self.rom_data.record_handoff();
-                        return true;
+                        return FetchEvent::Handoff;
                     }
                 }
                 FetchRegion::Other => {}
             }
-            return false;
+            return FetchEvent::None;
         }
         match region {
             FetchRegion::BiosWindow => {
@@ -216,19 +289,28 @@ impl BiosActivity {
             FetchRegion::Dram => self.fetches_dram += 1,
             FetchRegion::Other => {}
         }
-        if region == FetchRegion::Dram
-            && self.previous_fetch_physical >= GAME_IMAGE_START
-            && physical < GAME_IMAGE_START
-        {
-            self.post_handoff_service_calls += 1;
-            if self.post_handoff_service_entries.len() < POST_HANDOFF_SERVICE_CAP
-                && !self.post_handoff_service_entries.contains(&physical)
-            {
-                self.post_handoff_service_entries.push(physical);
+        let mut event = FetchEvent::None;
+        if region == FetchRegion::Dram {
+            let entered_resident =
+                self.previous_fetch_physical >= GAME_IMAGE_START && physical < GAME_IMAGE_START;
+            let exited_resident = self.resident_active && physical >= GAME_IMAGE_START;
+            if entered_resident {
+                self.post_handoff_service_calls += 1;
+                self.resident_calls += 1;
+                self.resident_active = true;
+                if self.post_handoff_service_entries.len() < POST_HANDOFF_SERVICE_CAP
+                    && !self.post_handoff_service_entries.contains(&physical)
+                {
+                    self.post_handoff_service_entries.push(physical);
+                }
+                event = FetchEvent::ResidentEnter;
+            } else if exited_resident {
+                self.resident_active = false;
+                event = FetchEvent::ResidentExit;
             }
         }
         self.previous_fetch_physical = physical;
-        false
+        event
     }
 
     /// Mark the current instruction fetch as finished so later byte reads of
@@ -237,6 +319,48 @@ impl BiosActivity {
         if self.enabled {
             self.rom_data.fetch_word.store(0, Ordering::Relaxed);
         }
+    }
+
+    /// Record the first value the guest reads from a resident data
+    /// address, keyed by the reading PC, for the LLE/HLE diff oracle.
+    pub fn note_resident_data_read(&self, pc: u32, address: u32, value: u8) {
+        if let Ok(mut map) = self.first_resident_data_reads.lock() {
+            if map.len() < RESIDENT_DATA_SAMPLE_CAP {
+                map.entry((pc, address)).or_insert(value);
+            }
+        }
+    }
+
+    /// Count MMIO reads by aligned address (poll profiling).
+    pub fn note_mmio_read(&self, address: u32, _value: u8) {
+        if let Ok(mut map) = self.mmio_read_counts.lock() {
+            *map.entry(address).or_insert(0) += 1;
+        }
+    }
+
+    /// Top polled MMIO addresses.
+    pub fn mmio_read_summary(&self) -> Vec<(u32, u64)> {
+        let mut entries: Vec<(u32, u64)> = self
+            .mmio_read_counts
+            .lock()
+            .map(|map| map.iter().map(|(a, n)| (*a, *n)).collect())
+            .unwrap_or_default();
+        entries.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
+        entries.truncate(16);
+        entries
+    }
+
+    /// Sorted first-read samples for the diff oracle.
+    pub fn resident_data_samples(&self) -> Vec<((u32, u32), u8)> {
+        self.first_resident_data_reads
+            .lock()
+            .map(|map| {
+                let mut entries: Vec<((u32, u32), u8)> =
+                    map.iter().map(|(key, value)| (*key, *value)).collect();
+                entries.sort_unstable();
+                entries
+            })
+            .unwrap_or_default()
     }
 
     /// Record a byte read from the internal ROM or BIOS ROM window. Fetch
@@ -309,6 +433,7 @@ impl BiosActivity {
                 POST_HANDOFF_SERVICE_CAP,
                 self.post_handoff_service_entries
             );
+            let _ = writeln!(text, "  resident calls tracked: {}", self.resident_calls);
         } else {
             let _ = writeln!(text, "  handoff: not reached");
         }

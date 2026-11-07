@@ -60,6 +60,7 @@ pub enum EmulatorError {
     },
     InvalidSaveState(&'static str),
     ExecutionNotImplemented,
+    Resident(crate::resident_services::ResidentError),
 }
 
 impl Display for EmulatorError {
@@ -135,6 +136,7 @@ impl Display for EmulatorError {
             Self::ExecutionNotImplemented => {
                 formatter.write_str("target execution is not implemented")
             }
+            Self::Resident(error) => write!(formatter, "resident service fault: {error}"),
         }
     }
 }

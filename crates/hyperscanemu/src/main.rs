@@ -99,7 +99,7 @@ fn run_headless(
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|interval| *interval != 0);
-    for frame in 1..=frames {
+    let run_result = (1..=frames).try_for_each(|frame| {
         emulator.run_frame()?;
         if trace_interval.is_some_and(|interval| frame % interval == 0) {
             let cd = emulator.cd_servo_state();
@@ -113,11 +113,67 @@ fn run_headless(
                 cd.frame_found,
             );
         }
+        Ok(())
+    });
+    if let Err(error) = run_result {
+        let registers = (0..32)
+            .filter_map(|index| {
+                let value = emulator.cpu().register(index)?;
+                (value != 0).then_some(format!("r{index}={value:08x}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("fault at frame PC {:08x}: {}", emulator.cpu().pc(), error);
+        eprintln!("registers: {registers}");
+        if let Some(path) = std::env::var_os("HYPERSCANEMU_STATE_DUMP_PATH") {
+            let _ = fs::write(Path::new(&path), emulator.serialize());
+        }
+        if let Some(path) = std::env::var_os("HYPERSCANEMU_RESIDENT_DATA_DUMP") {
+            let samples = emulator.resident_data_samples();
+            let mut text = String::new();
+            for ((pc, address), value) in samples {
+                text.push_str(&format!(
+                    "{pc:08x} {address:06x} {value:02x}
+"
+                ));
+            }
+            let _ = fs::write(Path::new(&path), text);
+        }
+        return Err(error);
     }
     print_uart(&mut emulator);
     print_run_summary(&emulator, frames)?;
     if let Some(summary) = emulator.bios_activity_summary() {
         println!("{summary}");
+    }
+    if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+        for (address, count) in emulator.bus().mmio_read_summary() {
+            println!("[mmio-profile] {address:08x} {count}");
+        }
+    }
+    if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+        for (pc, count) in emulator.pc_profile_summary() {
+            println!("[pc-profile] {pc:08x} {count}");
+        }
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_FINAL_DRAM_DUMP") {
+        let dram = emulator.bus().dram_contents();
+        let path = Path::new(&path);
+        fs::write(path, dram).with_context(|| format!("failed to write {}", path.display()))?;
+        println!("wrote final DRAM dump to {}", path.display());
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_RESIDENT_DATA_DUMP") {
+        let samples = emulator.resident_data_samples();
+        let mut text = String::new();
+        for ((pc, address), value) in samples {
+            text.push_str(&format!(
+                "{pc:08x} {address:06x} {value:02x}
+"
+            ));
+        }
+        let path = Path::new(&path);
+        fs::write(path, text).with_context(|| format!("failed to write {}", path.display()))?;
+        println!("wrote resident data samples to {}", path.display());
     }
     if let Some(path) = std::env::var_os("HYPERSCANEMU_HANDOFF_DRAM_DUMP") {
         if let Some(dram) = emulator.take_handoff_dram() {
