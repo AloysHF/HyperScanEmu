@@ -336,6 +336,14 @@ impl Spg290Devices {
         }
         for timer in &mut self.timers {
             if timer.tick(cpu_cycles)? {
+                if std::env::var_os("HYPERSCANEMU_TRACE_SERVICE_CALLS").is_some() {
+                    static TIMER_RAISES: std::sync::atomic::AtomicU32 =
+                        std::sync::atomic::AtomicU32::new(0);
+                    let n = TIMER_RAISES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n.is_multiple_of(50) {
+                        eprintln!("[timer-raise] n={n}");
+                    }
+                }
                 self.pending_interrupts |= 1_u64 << TIMER_INTERRUPT_SOURCE;
             }
         }
@@ -343,7 +351,17 @@ impl Spg290Devices {
     }
 
     pub fn take_pending_interrupts(&mut self) -> u64 {
-        std::mem::take(&mut self.pending_interrupts)
+        let taken = std::mem::take(&mut self.pending_interrupts);
+        if std::env::var_os("HYPERSCANEMU_TRACE_SERVICE_CALLS").is_some()
+            && taken & (1_u64 << 56) != 0
+        {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 5 || n.is_multiple_of(200) {
+                eprintln!("[take56] n={n} taken={taken:016x}");
+            }
+        }
+        taken
     }
 
     pub fn set_input(&mut self, input: InputState) {

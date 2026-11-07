@@ -28,6 +28,13 @@ pub const IRQ_RETURN_MAGIC: u32 = 0x0000_027c;
 /// Return address handed to the VBlank handler: the native continuation
 /// that performs the firmware's post-VBlank bookkeeping.
 pub const VBLANK_CONTINUATION_MAGIC: u32 = 0x0000_0278;
+/// Park address while a blocking service waits for its wake condition.
+pub const BLOCKED_MAGIC: u32 = 0x0000_0274;
+/// Firmware counter the delay service sleeps against, advanced by the
+/// timer ISR chain (r28-relative 0xa0045140-0x3d7c).
+pub const DELAY_TICKS: u32 = 0xa004_13c4;
+/// The delay service sleeps until ten delay ticks have passed.
+const DELAY_TICKS_PER_SLEEP: u32 = 10;
 /// Version returned by the OS version service (measured).
 pub const OS_VERSION: u32 = 21;
 
@@ -96,6 +103,13 @@ pub enum ResidentError {
     BadFileHandle { entry: u32, handle: u32 },
 }
 
+/// A blocking delay service call waiting for its tick budget.
+#[derive(Debug, Clone, Copy)]
+struct BlockedDelay {
+    saved: u32,
+    return_addr: u32,
+}
+
 #[derive(Debug)]
 struct OpenFile {
     lba: u32,
@@ -150,6 +164,7 @@ pub struct ResidentServices {
     /// Interrupt sources observed while delivery was deferred (handler
     /// running or multiple sources in one batch).
     carry: u64,
+    blocked: Option<BlockedDelay>,
     log: bool,
 }
 
@@ -163,7 +178,7 @@ impl ResidentServices {
 
     /// Classify a physical fetch address inside the resident region.
     pub fn classify(pc: u32) -> Option<ResidentFetch> {
-        if pc == IRQ_RETURN_MAGIC || pc == VBLANK_CONTINUATION_MAGIC {
+        if pc == IRQ_RETURN_MAGIC || pc == VBLANK_CONTINUATION_MAGIC || pc == BLOCKED_MAGIC {
             return Some(ResidentFetch::IrqReturn);
         }
         // Odd-alias entries: titles call some services two bytes into the
@@ -280,11 +295,27 @@ impl ResidentServices {
                 cpu.set_register(5, 2)?;
                 self.return_register(cpu, entry)
             }
-            // Frame-pacing delay: the firmware busy-waits against its tick
-            // counters; serving it immediately only removes the pause.
+            // Frame-pacing delay: the measured body snapshots the delay
+            // counter and sleeps until ten ticks have passed.
             entry::DELAY => {
-                cpu.set_register(4, 0)?;
-                self.return_register(cpu, entry)
+                let saved = bus.read_u32(DELAY_TICKS)?;
+                let return_addr = cpu.register(3).unwrap_or(0);
+                if return_addr < GAME_IMAGE_START {
+                    return Err(EmulatorError::Resident(ResidentError::BadReturn {
+                        entry,
+                        target: return_addr,
+                    }));
+                }
+                self.blocked = Some(BlockedDelay { saved, return_addr });
+                if self.log {
+                    eprintln!(
+                        "[delay] parked saved={saved} ret={return_addr:08x} frames={} psr={:08x}",
+                        self.irq_frames.len(),
+                        cpu.control_register(crate::cpu::CR_PSR).unwrap_or(0)
+                    );
+                }
+                cpu.set_pc(BLOCKED_MAGIC);
+                Ok(())
             }
             // Filesystem mode configuration: measured body stores the
             // context value and the clamped mode into firmware fields.
@@ -370,6 +401,59 @@ impl ResidentServices {
         }
     }
 
+    /// Saved program counters of the in-flight delivery frames.
+    pub fn irq_frame_pcs(&self) -> Vec<u32> {
+        self.irq_frames.iter().map(|frame| frame.pc).collect()
+    }
+
+    /// Whether any delivery frame is in flight.
+    pub fn irq_frames(&self) -> bool {
+        !self.irq_frames.is_empty()
+    }
+
+    /// Whether a blocking service call is parked.
+    pub fn blocked_delay(&self) -> bool {
+        self.blocked.is_some()
+    }
+
+    /// Wake check for a parked blocking delay: completed once ten delay
+    /// ticks have passed since entry. Restores the return address and the
+    /// measured return value.
+    pub fn poll_blocked(&mut self, cpu: &mut Score7, bus: &mut Bus) -> bool {
+        let Some(blocked) = self.blocked else {
+            return false;
+        };
+        let now = bus.read_u32(DELAY_TICKS).unwrap_or(0);
+        if self.log {
+            static ONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let seen = ONCE.load(std::sync::atomic::Ordering::Relaxed);
+            if now != seen {
+                ONCE.store(now, std::sync::atomic::Ordering::Relaxed);
+                eprintln!(
+                    "[delay] parked poll: now={now} saved={} target=+{} carry={:x} psr={:08x}",
+                    blocked.saved,
+                    now.wrapping_sub(blocked.saved),
+                    self.carry,
+                    cpu.control_register(crate::cpu::CR_PSR).unwrap_or(0)
+                );
+            }
+        }
+        if now.wrapping_sub(blocked.saved) < DELAY_TICKS_PER_SLEEP {
+            return false;
+        }
+        self.blocked = None;
+        if self.log {
+            eprintln!(
+                "[delay] woke after {} ticks",
+                now.wrapping_sub(blocked.saved)
+            );
+        }
+        let _ = cpu.set_register(4, 0);
+        let _ = cpu.set_register(28, FIRMWARE_CONTEXT);
+        cpu.set_pc(blocked.return_addr);
+        true
+    }
+
     /// Interrupt sources deferred from earlier steps.
     pub fn carry(&self) -> u64 {
         self.carry
@@ -402,6 +486,19 @@ impl ResidentServices {
                 self.delivery_counts[&u32::from(source)]
             );
         }
+        if source == TIMER_SOURCE {
+            // Mirror the firmware timer ISR, which runs whether or not the
+            // game registered a handler: acknowledge the overflow and
+            // advance the counters the firmware and the delay service read.
+            const TIMER_ACK: u32 = 0x8c00_0000;
+            const TIMER1_CONTROL: u32 = 0x0816_1000;
+            let _ = bus.write_u32(TIMER1_CONTROL, TIMER_ACK);
+            const TICKS_PER_TIMER_IRQ: u32 = 1;
+            let ticks = bus.read_u32(bios_field::TICKS).unwrap_or(0);
+            let _ = bus.write_u32(bios_field::TICKS, ticks.wrapping_add(TICKS_PER_TIMER_IRQ));
+            let delay_ticks = bus.read_u32(DELAY_TICKS).unwrap_or(0);
+            let _ = bus.write_u32(DELAY_TICKS, delay_ticks.wrapping_add(1));
+        }
         let Some(&handler) = self
             .irq_handlers
             .iter()
@@ -413,17 +510,6 @@ impl ResidentServices {
         };
         if handler < GAME_IMAGE_START {
             return false;
-        }
-        if source == TIMER_SOURCE {
-            // Mirror the firmware timer ISR: acknowledge the overflow and
-            // advance the high-resolution tick counter (measured rate ~9
-            // ticks per interrupt over the Spider-Man reference run).
-            const TIMER_ACK: u32 = 0x8c00_0000;
-            const TIMER1_CONTROL: u32 = 0x0816_1000;
-            let _ = bus.write_u32(TIMER1_CONTROL, TIMER_ACK);
-            const TICKS_PER_TIMER_IRQ: u32 = 1;
-            let ticks = bus.read_u32(bios_field::TICKS).unwrap_or(0);
-            let _ = bus.write_u32(bios_field::TICKS, ticks.wrapping_add(TICKS_PER_TIMER_IRQ));
         }
         if self.log {
             let captured = cpu.register(0).unwrap_or(0);

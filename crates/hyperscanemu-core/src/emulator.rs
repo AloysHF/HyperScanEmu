@@ -183,6 +183,11 @@ impl Emulator {
         self.state_occurrence
     }
 
+    /// Saved PCs of the in-flight native delivery frames.
+    pub fn irq_frame_pcs(&self) -> Vec<u32> {
+        self.resident.irq_frame_pcs()
+    }
+
     /// Top executed PCs when `HYPERSCANEMU_PC_PROFILE` is set.
     pub fn pc_profile_summary(&self) -> Vec<(u32, u64)> {
         let mut entries: Vec<(u32, u64)> =
@@ -256,7 +261,12 @@ impl Emulator {
         }
         self.bus
             .set_execution_context(self.cpu.pc(), self.cpu.register(3).unwrap_or(0));
-        if self.boot_mode == BootMode::Hle {
+        // A blocking service call parks the CPU; delivery frames (if a
+        // handler was interrupted) still execute until they return.
+        let parked = self.boot_mode == BootMode::Hle
+            && self.resident.blocked_delay()
+            && !self.resident.irq_frames();
+        if !parked && self.boot_mode == BootMode::Hle {
             use crate::resident_services::{ResidentFetch, ResidentServices};
             match ResidentServices::classify(self.cpu.pc() & crate::ADDRESS_MASK) {
                 Some(ResidentFetch::IrqReturn) => {
@@ -287,20 +297,44 @@ impl Emulator {
                 None => {}
             }
         }
-        let outcome = self.cpu.step(&mut self.bus)?;
-        if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
+        let outcome = if parked {
+            // Time passes while the service sleeps.
             self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
-        }
+            StepOutcome::Advanced { width: 4 }
+        } else {
+            let outcome = self.cpu.step(&mut self.bus)?;
+            if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
+                self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+            }
+            outcome
+        };
         if let Some(disc) = &self.disc {
             self.bus.service_cd(disc)?;
         }
-        let pending = self.bus.take_pending_interrupts();
-        for source in 1..64 {
-            if pending & (1_u64 << source) != 0 {
-                if self.boot_mode == BootMode::Hle {
-                    self.resident
-                        .deliver_irq(&mut self.cpu, &mut self.bus, source);
-                } else {
+        let mut pending = self.bus.take_pending_interrupts();
+        if self.boot_mode == BootMode::Hle {
+            pending |= self.resident.carry();
+            // Deliver at most one source per step, highest vector first like
+            // the CPU's arbitration, and only while interrupts are enabled;
+            // everything else stays pending until the handler returns.
+            if pending != 0 && self.resident.delivery_allowed(&self.cpu) {
+                let source = 63 - pending.leading_zeros();
+                let source = u8::try_from(source).unwrap_or(0);
+                // Delivered or dropped (no handler): the source leaves the
+                // pending set either way.
+                let _ = self
+                    .resident
+                    .deliver_irq(&mut self.cpu, &mut self.bus, source);
+                pending &= !(1_u64 << source);
+            }
+            self.resident.set_carry(pending);
+            // The tail advanced the delay counter; wake the parked call.
+            if parked {
+                self.resident.poll_blocked(&mut self.cpu, &mut self.bus);
+            }
+        } else {
+            for source in 1..64 {
+                if pending & (1_u64 << source) != 0 {
                     self.cpu.request_interrupt(source)?;
                 }
             }
