@@ -147,6 +147,9 @@ pub struct ResidentServices {
     irq_frames: Vec<IrqFrame>,
     unhandled_logged: Vec<u32>,
     delivery_counts: std::collections::HashMap<u32, u64>,
+    /// Interrupt sources observed while delivery was deferred (handler
+    /// running or multiple sources in one batch).
+    carry: u64,
     log: bool,
 }
 
@@ -367,6 +370,24 @@ impl ResidentServices {
         }
     }
 
+    /// Interrupt sources deferred from earlier steps.
+    pub fn carry(&self) -> u64 {
+        self.carry
+    }
+
+    /// Store deferred interrupt sources for the next step.
+    pub fn set_carry(&mut self, pending: u64) {
+        self.carry = pending;
+    }
+
+    /// Whether native delivery may run now: the CPU only takes interrupts
+    /// when the program-status word enables them, and the dispatcher keeps
+    /// them disabled while a handler runs.
+    pub fn delivery_allowed(&self, cpu: &Score7) -> bool {
+        cpu.control_register(crate::cpu::CR_PSR)
+            .is_some_and(|psr| psr & 1 != 0)
+    }
+
     /// Deliver a device interrupt natively: call the registered handler with
     /// the firmware dispatcher's register conventions. Returns `false` when
     /// no handler is registered (the interrupt is dropped, matching the
@@ -404,6 +425,19 @@ impl ResidentServices {
             let ticks = bus.read_u32(bios_field::TICKS).unwrap_or(0);
             let _ = bus.write_u32(bios_field::TICKS, ticks.wrapping_add(TICKS_PER_TIMER_IRQ));
         }
+        if self.log {
+            let captured = cpu.register(0).unwrap_or(0);
+            let stack_like = (0xa0f0_0000..0xa100_0000).contains(&captured)
+                || captured == 0x2000_0000
+                || captured == 0;
+            if !stack_like {
+                eprintln!(
+                    "[irq-badr0] source={source} captured-r0={captured:08x} pc={:08x} depth={}",
+                    cpu.pc(),
+                    self.irq_frames.len()
+                );
+            }
+        }
         let return_magic = if source == crate::PPU_INTERRUPT_SOURCE {
             VBLANK_CONTINUATION_MAGIC
         } else {
@@ -412,10 +446,11 @@ impl ResidentServices {
         self.irq_frames.push(IrqFrame::capture(cpu));
         if self.log {
             eprintln!(
-                "[irq-frame] depth={} pc->{:08x} r3={:08x}",
+                "[irq-frame] depth={} pc->{:08x} r3={:08x} psr={:08x}",
                 self.irq_frames.len(),
                 handler,
-                return_magic
+                return_magic,
+                cpu.control_register(crate::cpu::CR_PSR).unwrap_or(0)
             );
         }
         let _ = cpu.set_register(3, return_magic);
