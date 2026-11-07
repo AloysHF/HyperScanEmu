@@ -9,6 +9,17 @@ pub const EMULATION_STRATEGY: &str = "lle";
 const INITIAL_DISPLAY_WIDTH: usize = 320;
 const INITIAL_DISPLAY_HEIGHT: usize = 240;
 
+/// How the machine enters the game: through the real firmware (LLE) or
+/// through the HLE boot path without firmware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BootMode {
+    /// Boot through the real firmware ROMs.
+    #[default]
+    Firmware,
+    /// Boot the game directly with the measured handoff state.
+    Hle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionReport {
     pub instructions: u64,
@@ -23,6 +34,7 @@ pub struct Emulator {
     cpu: Score7,
     bus: Bus,
     disc: Option<DiscImage>,
+    boot_mode: BootMode,
     framebuffer: Vec<u32>,
     audio_samples: Vec<i16>,
     uart_output: Vec<u8>,
@@ -33,10 +45,21 @@ pub struct Emulator {
 }
 impl Emulator {
     pub fn new(firmware: Firmware) -> Self {
+        Self::with_bus(Bus::new(firmware), BootMode::Firmware)
+    }
+
+    /// Machine without firmware; call [`Emulator::boot_hle`] after attaching
+    /// a disc.
+    pub fn new_hle() -> Self {
+        Self::with_bus(Bus::new_hle(), BootMode::Hle)
+    }
+
+    fn with_bus(bus: Bus, boot_mode: BootMode) -> Self {
         Self {
             cpu: Score7::new(),
-            bus: Bus::new(firmware),
+            bus,
             disc: None,
+            boot_mode,
             framebuffer: vec![0; INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
             uart_output: Vec::new(),
@@ -47,7 +70,20 @@ impl Emulator {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Boot mode selected for this machine.
+    pub fn boot_mode(&self) -> BootMode {
+        self.boot_mode
+    }
+
+    /// Emulation strategy in effect: `lle` with firmware, `hle` without.
+    pub fn emulation_strategy(&self) -> &'static str {
+        match self.boot_mode {
+            BootMode::Firmware => EMULATION_STRATEGY,
+            BootMode::Hle => "hle",
+        }
+    }
+
+    pub fn reset(&mut self) -> Result<(), EmulatorError> {
         self.cpu.reset();
         self.bus.reset();
         self.bus.set_disc(self.disc.as_ref());
@@ -60,6 +96,19 @@ impl Emulator {
         self.frame_index = 0;
         self.display_width = INITIAL_DISPLAY_WIDTH;
         self.display_height = INITIAL_DISPLAY_HEIGHT;
+        if self.boot_mode == BootMode::Hle {
+            let disc = self.disc.as_ref().ok_or(EmulatorError::InvalidDisc(
+                "HLE boot requires an attached game disc",
+            ))?;
+            crate::hle_boot::boot(&mut self.cpu, &mut self.bus, disc)?;
+        }
+        Ok(())
+    }
+
+    /// Boot the attached disc through the HLE path without firmware.
+    pub fn boot_hle(&mut self) -> Result<(), EmulatorError> {
+        self.boot_mode = BootMode::Hle;
+        self.reset()
     }
 
     pub fn set_input(&mut self, input: InputState) {
@@ -96,6 +145,18 @@ impl Emulator {
 
     pub fn cd_servo_state(&self) -> crate::CdServoState {
         self.bus.cd_servo_state()
+    }
+
+    /// End-of-run firmware activity summary, `None` while the
+    /// `HYPERSCANEMU_TRACE_BIOS_FETCH` trace is disabled.
+    pub fn bios_activity_summary(&self) -> Option<String> {
+        self.bus.bios_activity_summary()
+    }
+
+    /// Take the DRAM image captured at the BIOS-to-game handoff, if the
+    /// trace captured one.
+    pub fn take_handoff_dram(&mut self) -> Option<Vec<u8>> {
+        self.bus.take_handoff_dram()
     }
 
     pub fn cpu(&self) -> &Score7 {
@@ -296,7 +357,7 @@ mod tests {
                 crate::ControllerState::default(),
             ],
         });
-        emulator.reset();
+        emulator.reset().unwrap();
 
         assert_eq!(emulator.frame_index(), 0);
         assert_eq!(emulator.framebuffer().len(), 320 * 240);

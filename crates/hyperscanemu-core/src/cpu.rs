@@ -9,12 +9,12 @@ const FLAG_Z: u32 = 1 << 2;
 const FLAG_N: u32 = 1 << 3;
 const FLAG_T: u32 = 1 << 4;
 
-const CR_PSR: usize = 0;
-const CR_FLAGS: usize = 1;
-const CR_ECR: usize = 2;
-const CR_EXCEPTION_VECTOR: usize = 3;
-const CR_EPC: usize = 5;
-const CR_EMA: usize = 6;
+pub(crate) const CR_PSR: usize = 0;
+pub(crate) const CR_FLAGS: usize = 1;
+pub(crate) const CR_ECR: usize = 2;
+pub(crate) const CR_EXCEPTION_VECTOR: usize = 3;
+pub(crate) const CR_EPC: usize = 5;
+pub(crate) const CR_EMA: usize = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -119,6 +119,35 @@ impl Score7 {
         Ok(())
     }
 
+    /// One-line CPU state dump for the firmware activity handoff snapshot.
+    fn handoff_cpu_dump(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = String::new();
+        let _ = writeln!(
+            text,
+            "BIOS-to-game handoff at PC {:08x} ({} estimated cycles):",
+            self.pc, self.cycles
+        );
+        let registers = (0..32)
+            .filter_map(|index| {
+                let value = self.registers[index];
+                (value != 0).then_some(format!("r{index}={value:08x}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = writeln!(text, "  registers: {registers}");
+        let controls = (0..8)
+            .map(|index| format!("cr{index}={:08x}", self.control[index]))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = writeln!(
+            text,
+            "  controls: {controls} ce={:08x}:{:08x}",
+            self.ce_high, self.ce_low
+        );
+        text
+    }
+
     pub fn step(&mut self, bus: &mut Bus) -> Result<StepOutcome, EmulatorError> {
         self.previous_pc = self.pc;
         if self.control[CR_PSR] & 1 != 0 && self.pending_interrupts != 0 {
@@ -130,7 +159,15 @@ impl Score7 {
                 width: 0,
             });
         }
-        let raw = bus.read_u32(self.pc & !3)?;
+        let fetch_word = self.pc & !3;
+        if bus.begin_bios_fetch(fetch_word, self.cycles) {
+            let mut snapshot = self.handoff_cpu_dump();
+            bus.append_handoff_snapshot(&mut snapshot);
+            bus.capture_handoff_dram();
+            eprintln!("{snapshot}");
+        }
+        let raw = bus.read_u32(fetch_word)?;
+        bus.end_bios_fetch();
         let format = ((raw >> 30) & 2) | ((raw >> 15) & 1);
         let outcome = match format {
             0 => {

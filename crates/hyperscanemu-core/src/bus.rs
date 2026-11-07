@@ -1,6 +1,8 @@
+use std::fmt::Write as _;
+
 use crate::{
-    video::rgb565_to_xrgb8888, CardImage, DiscImage, EmulatorError, Firmware, InputState,
-    Spg290Devices,
+    video::rgb565_to_xrgb8888, BiosActivity, CardImage, DiscImage, EmulatorError, Firmware,
+    InputState, Spg290Devices,
 };
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
@@ -22,23 +24,40 @@ pub enum BootSource {
     ExternalRom,
 }
 
+/// Firmware fingerprint reported when no firmware is loaded (HLE boot).
+pub const HLE_FIRMWARE_FINGERPRINT: u64 = 0;
+
 #[derive(Debug, Clone)]
 pub struct Bus {
     dram: Box<[u8]>,
     internal_sram: Box<[u8]>,
-    firmware: Firmware,
+    firmware: Option<Firmware>,
     boot_source: BootSource,
     devices: Spg290Devices,
+    bios_trace: BiosActivity,
+    handoff_dram: Option<Vec<u8>>,
 }
 
 impl Bus {
     pub fn new(firmware: Firmware) -> Self {
+        Self::with_firmware(Some(firmware))
+    }
+
+    /// Bus without firmware for the HLE boot path. Reads of either firmware
+    /// ROM window fault.
+    pub fn new_hle() -> Self {
+        Self::with_firmware(None)
+    }
+
+    fn with_firmware(firmware: Option<Firmware>) -> Self {
         Self {
             dram: vec![0; DRAM_SIZE].into_boxed_slice(),
             internal_sram: vec![0; INTERNAL_SRAM_SIZE].into_boxed_slice(),
             firmware,
             boot_source: BootSource::ExternalRom,
             devices: Spg290Devices::new(),
+            bios_trace: BiosActivity::new(),
+            handoff_dram: None,
         }
     }
 
@@ -47,6 +66,7 @@ impl Bus {
         self.internal_sram.fill(0);
         self.boot_source = BootSource::ExternalRom;
         self.devices.reset();
+        self.bios_trace = BiosActivity::new();
     }
 
     pub fn boot_source(&self) -> BootSource {
@@ -69,7 +89,12 @@ impl Bus {
                 Ok(self.internal_sram[(address - INTERNAL_SRAM_START) as usize])
             }
             INTERNAL_ROM_START..=0x0b00_7fff => {
-                Ok(self.firmware.internal_rom()[(address - INTERNAL_ROM_START) as usize])
+                self.bios_trace.note_rom_byte_read(address);
+                let firmware = self
+                    .firmware
+                    .as_ref()
+                    .ok_or_else(|| memory_fault("read", address, 1))?;
+                Ok(firmware.internal_rom()[(address - INTERNAL_ROM_START) as usize])
             }
             EXTERNAL_ROM_START..=EXTERNAL_ROM_END => self.read_external_window(address),
             _ => Err(memory_fault("read", address, 1)),
@@ -148,7 +173,21 @@ impl Bus {
     }
 
     pub fn firmware_fingerprint(&self) -> u64 {
-        self.firmware.fingerprint()
+        self.firmware
+            .as_ref()
+            .map_or(HLE_FIRMWARE_FINGERPRINT, Firmware::fingerprint)
+    }
+
+    /// Copy bytes into guest DRAM at `address`, as the firmware loader does.
+    pub fn load_dram(&mut self, address: u32, bytes: &[u8]) -> Result<(), EmulatorError> {
+        let offset = (address & ADDRESS_MASK) as usize % DRAM_SIZE;
+        if offset + bytes.len() > DRAM_SIZE {
+            return Err(EmulatorError::InvalidDisc(
+                "the game image does not fit in the DRAM load window",
+            ));
+        }
+        self.dram[offset..offset + bytes.len()].copy_from_slice(bytes);
+        Ok(())
     }
 
     fn write_mmio_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
@@ -201,9 +240,112 @@ impl Bus {
         self.devices.cd_servo_state()
     }
 
+    /// Feed one instruction fetch into the firmware activity trace.
+    /// Returns `true` on the BIOS-to-game handoff transition.
+    pub fn begin_bios_fetch(&mut self, fetch_word: u32, cycles: u64) -> bool {
+        self.bios_trace.note_fetch(fetch_word, cycles)
+    }
+
+    /// Close the instruction fetch opened by [`Bus::begin_bios_fetch`].
+    pub fn end_bios_fetch(&mut self) {
+        self.bios_trace.end_fetch();
+    }
+
+    /// End-of-run firmware activity summary, `None` while tracing is disabled.
+    pub fn bios_activity_summary(&self) -> Option<String> {
+        self.bios_trace.summary()
+    }
+
+    /// Capture a copy of DRAM at the BIOS-to-game handoff for offline
+    /// analysis. Only meaningful while the trace is enabled.
+    pub fn capture_handoff_dram(&mut self) {
+        if self.bios_trace.is_enabled() {
+            self.handoff_dram = Some(self.dram.to_vec());
+        }
+    }
+
+    /// Take the captured handoff DRAM image, if any.
+    pub fn take_handoff_dram(&mut self) -> Option<Vec<u8>> {
+        self.handoff_dram.take()
+    }
+
+    /// Append bus-visible state (boot source, MMIO registers, DRAM page
+    /// occupancy) to a handoff snapshot dump.
+    pub fn append_handoff_snapshot(&self, text: &mut String) {
+        const HANDOFF_DRAM_RANGE_CAP: usize = 64;
+        let _ = writeln!(text, "  boot source: {:?}", self.boot_source);
+
+        let mut ranges = Vec::from([
+            ("PPU registers", 0x0801_0000, 0x0801_00ff),
+            ("SPU registers", 0x0805_0000, 0x0805_00ff),
+            ("CD servo", 0x0806_0000, 0x0806_00ff),
+            ("MIU", 0x0807_000c, 0x0807_01fc),
+            ("Buffer control", 0x0809_0000, 0x0809_00fc),
+            ("Interrupt controller", 0x080a_0000, 0x080a_0024),
+            ("I2C", 0x0813_0020, 0x0813_0038),
+            ("UART", 0x0815_0000, 0x0815_0010),
+            ("System config", 0x0820_0000, 0x0820_0114),
+            ("Clock registers", 0x0821_0000, 0x0821_0114),
+            ("MIU extended", 0x0823_0000, 0x0823_0064),
+        ]);
+        const TIMER_NAMES: [&str; 6] = [
+            "Timer 0", "Timer 1", "Timer 2", "Timer 3", "Timer 4", "Timer 5",
+        ];
+        for (block, name) in TIMER_NAMES.iter().enumerate() {
+            let base = 0x0816_0000 + (block as u32) * 0x1000;
+            ranges.push((name, base, base + 0x40));
+        }
+
+        for (name, start, end) in ranges {
+            let _ = writeln!(text, "  {name} {start:08x}-{end:08x}:");
+            let mut line = String::new();
+            let mut words = 0;
+            for address in (start..=end).step_by(4) {
+                let value = match self.devices.read_u32(address) {
+                    Ok(value) => format!("{value:08x}"),
+                    Err(_) => "????????".to_string(),
+                };
+                let _ = write!(line, " {address:08x}={value}");
+                words += 1;
+                if words % 4 == 0 {
+                    let _ = writeln!(text, "   {line}");
+                    line.clear();
+                }
+            }
+            if !line.is_empty() {
+                let _ = writeln!(text, "   {line}");
+            }
+        }
+
+        let mut page_ranges: Vec<(u32, u32)> = Vec::new();
+        const PAGE: usize = 4096;
+        for page in 0..DRAM_SIZE / PAGE {
+            let start = page * PAGE;
+            let end = start + PAGE;
+            if self.dram[start..end].iter().any(|byte| *byte != 0) {
+                match page_ranges.last_mut() {
+                    Some(range) if range.1 == start as u32 => range.1 = end as u32,
+                    _ => page_ranges.push((start as u32, end as u32)),
+                }
+            }
+        }
+        let total = page_ranges.len();
+        page_ranges.truncate(HANDOFF_DRAM_RANGE_CAP);
+        let _ = writeln!(
+            text,
+            "  dram non-zero page ranges ({total} total, up to {HANDOFF_DRAM_RANGE_CAP} shown): {page_ranges:?}"
+        );
+    }
+
     pub fn service_cd(&mut self, disc: &DiscImage) -> Result<(), EmulatorError> {
         while let Some(request) = self.devices.take_cd_dma_request() {
             let sector = disc.read_raw_sector(request.lba)?;
+            if self.bios_trace.is_enabled() && request.buffer_pointer < crate::GAME_ENTRY_PHYSICAL {
+                eprintln!(
+                    "[cd-dma] low-destination load: lba {} -> {:08x}, {} sector(s)",
+                    request.lba, request.buffer_pointer, request.sector_size
+                );
+            }
             let mut pointer = request.buffer_pointer;
             for index in 0..request.sector_size {
                 let byte = sector.get(index).copied().unwrap_or(0);
@@ -515,13 +657,19 @@ impl Bus {
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
+        let firmware = self
+            .firmware
+            .as_ref()
+            .ok_or_else(|| memory_fault("read", address, 1))?;
         if self.boot_source == BootSource::InternalRom && address >= BOOT_WINDOW_START {
+            let rom = firmware.internal_rom();
             let offset = (address - BOOT_WINDOW_START) as usize;
-            return Ok(self.firmware.internal_rom()[offset % self.firmware.internal_rom().len()]);
+            return Ok(rom[offset % rom.len()]);
         }
 
+        let rom = firmware.bios_rom();
         let offset = (address - EXTERNAL_ROM_START) as usize;
-        Ok(self.firmware.bios_rom()[offset % self.firmware.bios_rom().len()])
+        Ok(rom[offset % rom.len()])
     }
 }
 

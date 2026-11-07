@@ -36,6 +36,35 @@ are never silently treated as successful operations.
 user payload. The CD servo consumes that interface for DMA, while CUE path
 resolution, ZIP decompression and host files remain outside the device model.
 
+## Boot modes
+
+The machine boots one of two ways:
+
+- **Firmware LLE (default).** Both firmware ROMs are required; the S+Core 7
+  interpreter executes the real BIOS from reset at `0x9f000000`. The BIOS
+  initializes the peripherals, reads the disc TOC, loads `HYPER.EXE` flat to
+  `0xa00901fc` and enters it at `0xa0091000`.
+- **HLE boot (`--hle-boot`, or automatically when the firmware files are
+  missing).** The core reproduces the measured BIOS-to-game handoff state
+  without executing firmware: an ISO 9660 walk of the disc locates
+  `HYPER.EXE`, loads it flat to `0xa00901fc`, and enters `0xa0091000` with
+  the stack pointer `0x20000000` and the measured control-register state
+  (vector base `0xa0000000`, interrupts enabled).
+
+The handoff contract was measured with the `HYPERSCANEMU_TRACE_BIOS_FETCH`
+instrumentation. Across retail titles the games never fetch from either
+firmware ROM window after the handoff; they do, however, call firmware code
+that the BIOS leaves resident in guest DRAM (an interrupt dispatcher below
+`0x00010000` and a CD service around `0x00028000`-`0x00034000`). Rebuilding
+those resident services natively is required before the HLE path can play
+retail titles end to end; until then HLE boot is the measurement baseline and
+the firmware stays the recommended way to play.
+
+Setting `HYPERSCANEMU_TRACE_BIOS_FETCH=1` prints the handoff snapshot
+(registers, control registers, MMIO state, DRAM occupancy) and an end-of-run
+firmware-activity summary; `HYPERSCANEMU_HANDOFF_DRAM_DUMP=<path>` writes the
+DRAM image captured at the handoff for offline analysis.
+
 ## Implementation notes
 
 | Area | Document |

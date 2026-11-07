@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use hyperscanemu_core::{CdCommandKind, Emulator, Firmware, StepOutcome};
+use hyperscanemu_core::{CdCommandKind, Emulator, StepOutcome};
 use hyperscanemu_media::load_disc;
 
 mod audio_output;
@@ -12,6 +12,7 @@ mod input;
 mod standalone;
 
 use cli::{Cli, PlayOptions};
+use standalone::load_firmware;
 
 fn main() -> Result<()> {
     let args = Cli::parse();
@@ -43,6 +44,7 @@ fn main() -> Result<()> {
         run_headless(
             &args.system_dir,
             media,
+            args.hle_boot,
             frames,
             args.output.as_deref(),
             args.screenshot.as_deref(),
@@ -53,6 +55,7 @@ fn main() -> Result<()> {
     let options = PlayOptions {
         system_dir: args.system_dir.clone(),
         media: media.to_path_buf(),
+        hle_boot: args.hle_boot,
         scale: args.scale,
         fullscreen: args.fullscreen,
         volume: args.volume,
@@ -78,14 +81,20 @@ fn inspect_disc(media: &Path) -> Result<()> {
 fn run_headless(
     system_dir: &Path,
     media: &Path,
+    force_hle: bool,
     frames: u64,
     output: Option<&Path>,
     screenshot: Option<&Path>,
 ) -> Result<()> {
-    let firmware = load_firmware(system_dir)?;
     let disc = load_disc(media)?;
-    let mut emulator = Emulator::new(firmware);
+    let mut emulator = match load_firmware(system_dir, force_hle)? {
+        Some(firmware) => Emulator::new(firmware),
+        None => Emulator::new_hle(),
+    };
     emulator.attach_disc(disc);
+    if emulator.boot_mode() == hyperscanemu_core::BootMode::Hle {
+        emulator.boot_hle()?;
+    }
     let trace_interval = std::env::var("HYPERSCANEMU_FRAME_TRACE_INTERVAL")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -107,6 +116,16 @@ fn run_headless(
     }
     print_uart(&mut emulator);
     print_run_summary(&emulator, frames)?;
+    if let Some(summary) = emulator.bios_activity_summary() {
+        println!("{summary}");
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_HANDOFF_DRAM_DUMP") {
+        if let Some(dram) = emulator.take_handoff_dram() {
+            let path = Path::new(&path);
+            fs::write(path, dram).with_context(|| format!("failed to write {}", path.display()))?;
+            println!("wrote handoff DRAM dump to {}", path.display());
+        }
+    }
     if let Some(path) = output {
         let (width, height) = emulator.display_size();
         fs::write(path, encode_ppm(emulator.framebuffer(), width, height))
@@ -121,7 +140,8 @@ fn run_headless(
 }
 
 fn trace(system_dir: &Path, steps: u64) -> Result<()> {
-    let firmware = load_firmware(system_dir)?;
+    let firmware = hyperscanemu_core::firmware::load(system_dir)
+        .context("the instruction trace executes real firmware and requires it")?;
     let mut emulator = Emulator::new(firmware);
     let start_pc = emulator.cpu().pc();
     let start_cycles = emulator.cpu().cycles();
@@ -159,24 +179,24 @@ fn trace(system_dir: &Path, steps: u64) -> Result<()> {
         exceptions,
         emulator.bus().boot_source()
     );
+    if let Some(summary) = emulator.bios_activity_summary() {
+        println!("{summary}");
+    }
     Ok(())
-}
-
-fn load_firmware(system_dir: &Path) -> Result<Firmware> {
-    hyperscanemu_core::firmware::load(system_dir).map_err(Into::into)
 }
 
 fn print_run_summary(emulator: &Emulator, frames: u64) -> Result<()> {
     let (width, height) = emulator.display_size();
     println!(
-        "completed {} frame(s): {}x{}, frame fingerprint {:016x}, PC {:08x}, PPU {:08x}, TVE {:08x}",
+        "completed {} frame(s): {}x{}, frame fingerprint {:016x}, PC {:08x}, PPU {:08x}, TVE {:08x}, boot {}",
         frames,
         width,
         height,
         frame_fingerprint(emulator.framebuffer()),
         emulator.cpu().pc(),
         emulator.bus().read_u32(0x0801_0000)?,
-        emulator.bus().read_u32(0x0803_0000)?
+        emulator.bus().read_u32(0x0803_0000)?,
+        emulator.emulation_strategy(),
     );
     println!(
         "video state: sprites {:08x}, layers [{:08x}, {:08x}, {:08x}], TV buffer {}",
