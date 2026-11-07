@@ -578,6 +578,10 @@ pub fn boot(cpu: &mut Score7, bus: &mut Bus, disc: &DiscImage) -> Result<(), Emu
             let _ = bus.write_u32(base + (index as u32) * 4, *value);
         }
     }
+    // Firmware data fields at their measured handoff values: the boot-time
+    // asynchronous operations completed, so the polled mode fields read -1.
+    let _ = bus.write_u32(0xa004_12a4, u32::MAX);
+    let _ = bus.write_u32(0xa004_12a8, u32::MAX);
     // Timer gates are write-only derived state: the firmware enables them
     // during boot while the gate registers read back as zero, so the
     // measured snapshot cannot restore them. Re-enable all six.

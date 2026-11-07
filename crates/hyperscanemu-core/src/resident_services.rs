@@ -76,6 +76,8 @@ pub mod entry {
     /// Critical-section enter/leave pair (measured bodies are flag waits).
     pub const CRITICAL_ENTER: u32 = 0x0890;
     pub const CRITICAL_LEAVE: u32 = 0x08cc;
+    /// Mode-field query returning whether the field equals -1.
+    pub const MODE_QUERY: u32 = 0x0a28;
     /// MIU/PPU DMA setup writing measured register windows.
     pub const DMA_SETUP: u32 = 0x0b00;
     /// Memory-control unlock sequence plus a status query.
@@ -161,6 +163,14 @@ impl ResidentServices {
         if pc == IRQ_RETURN_MAGIC || pc == VBLANK_CONTINUATION_MAGIC {
             return Some(ResidentFetch::IrqReturn);
         }
+        // Odd-alias entries: titles call some services two bytes into the
+        // trampoline; the fetch still reads the aligned entry's word, so
+        // route it to the aligned service.
+        if pc & 3 != 0 {
+            if let Some(ResidentFetch::Service(entry)) = Self::classify(pc & !3) {
+                return Some(ResidentFetch::Service(entry));
+            }
+        }
         if (RESIDENT_START..GAME_IMAGE_START).contains(&pc) {
             if matches!(
                 pc,
@@ -179,6 +189,7 @@ impl ResidentServices {
                     | entry::FS_CONFIGURE
                     | entry::CRITICAL_ENTER
                     | entry::CRITICAL_LEAVE
+                    | entry::MODE_QUERY
                     | entry::DMA_SETUP
                     | entry::MEM_CONTROL
                     | entry::FRAME_TICK
@@ -281,6 +292,18 @@ impl ResidentServices {
                 bus.write_u32(0xa004_129c, mode)?;
                 cpu.set_register(4, 0)?;
                 self.return_register(cpu, entry)
+            }
+            // Mode-field query: measured body returns 1 when the mode
+            // field equals -1, else 0 (stack-convention return).
+            entry::MODE_QUERY => {
+                // The polled asynchronous operation completes instantly:
+                // the firmware's deferred pump (counter increments plus a
+                // completion write) has no native equivalent yet, so report
+                // completion and let the title proceed.
+                let _ = bus.write_u32(bios_field::MODE_FIELD_2, u32::MAX);
+                let _ = bus.write_u32(bios_field::MODE_FIELD, u32::MAX);
+                cpu.set_register(4, 1)?;
+                self.return_auto(cpu, bus, entry)
             }
             // Critical-section pair: the measured bodies toggle a firmware
             // flag with waits; serving them immediately preserves the flag
@@ -461,6 +484,22 @@ impl ResidentServices {
                 target,
             }))
         }
+    }
+
+    /// Return using whichever convention the caller used: a valid `r3`
+    /// wins, otherwise the return address is read from the caller's stack
+    /// slots (services whose epilogue pops both `r2` and `r3`).
+    fn return_auto(
+        &self,
+        cpu: &mut Score7,
+        bus: &mut Bus,
+        entry: u32,
+    ) -> Result<(), EmulatorError> {
+        let register_target = cpu.register(3).unwrap_or(0);
+        if register_target >= GAME_IMAGE_START {
+            return self.return_register(cpu, entry);
+        }
+        self.return_via_stack(cpu, bus, entry)
     }
 
     /// Return from a stack-convention service (frame tick): the caller

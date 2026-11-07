@@ -143,6 +143,9 @@ impl Bus {
 
     pub fn write_u8(&mut self, address: u32, value: u8) -> Result<(), EmulatorError> {
         let address = address & ADDRESS_MASK;
+        if address == 0x0818_001c && self.bios_trace.is_enabled() {
+            eprintln!("[sd-watch] write {value:02x} pc={:08x}", self.execution_pc);
+        }
         if (MMIO_START..=MMIO_END).contains(&address) {
             let aligned = address & !3;
             let shift = (address & 3) * 8;
@@ -152,7 +155,7 @@ impl Bus {
         }
         match address {
             0..=DRAM_END => {
-                if (address == 0x0015_1828 || address == 0x0004_1720)
+                if (address == 0x0015_1828 || address == 0x0004_1720 || address == 0x0004_12a8)
                     && self.bios_trace.is_enabled()
                 {
                     eprintln!(

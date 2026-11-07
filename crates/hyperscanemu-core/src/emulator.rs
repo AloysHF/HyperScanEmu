@@ -39,6 +39,8 @@ pub struct Emulator {
     pc_profile: std::collections::HashMap<u32, u64>,
     state_dump_pc: std::sync::OnceLock<Option<u32>>,
     state_dumped: bool,
+    state_occurrence: u64,
+    state_dump_occurrence: std::sync::OnceLock<u64>,
     stack_probe: std::sync::OnceLock<bool>,
     framebuffer: Vec<u32>,
     audio_samples: Vec<i16>,
@@ -69,6 +71,8 @@ impl Emulator {
             pc_profile: std::collections::HashMap::new(),
             state_dump_pc: std::sync::OnceLock::new(),
             state_dumped: false,
+            state_occurrence: 0,
+            state_dump_occurrence: std::sync::OnceLock::new(),
             stack_probe: std::sync::OnceLock::new(),
             framebuffer: vec![0; INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
@@ -174,6 +178,11 @@ impl Emulator {
         self.bus.resident_data_samples()
     }
 
+    /// Occurrence count of the state-dump target PC.
+    pub fn state_occurrence(&self) -> u64 {
+        self.state_occurrence
+    }
+
     /// Top executed PCs when `HYPERSCANEMU_PC_PROFILE` is set.
     pub fn pc_profile_summary(&self) -> Vec<(u32, u64)> {
         let mut entries: Vec<(u32, u64)> =
@@ -219,17 +228,26 @@ impl Emulator {
                 self.state_dumped = true;
             }
         }
-        if let Some(target) = *self.state_dump_pc.get_or_init(|| {
+        let target = *self.state_dump_pc.get_or_init(|| {
             std::env::var("HYPERSCANEMU_STATE_DUMP_AT_PC")
                 .ok()
                 .and_then(|value| u32::from_str_radix(value.trim_start_matches("0x"), 16).ok())
-        }) {
-            if !self.state_dumped && self.cpu.pc() & crate::ADDRESS_MASK == target {
-                if let Ok(path) = std::env::var("HYPERSCANEMU_STATE_DUMP_PATH") {
-                    let _ = std::fs::write(path, self.serialize());
-                    eprintln!("[state-dump] wrote state at PC {target:08x}");
+        });
+        if let Some(target) = target {
+            if self.cpu.pc() & crate::ADDRESS_MASK == target {
+                self.state_occurrence += 1;
+                let wanted = *self.state_dump_occurrence.get_or_init(|| {
+                    std::env::var("HYPERSCANEMU_STATE_DUMP_OCCURRENCE")
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(1)
+                });
+                if self.state_occurrence == wanted {
+                    if let Ok(path) = std::env::var("HYPERSCANEMU_STATE_DUMP_PATH") {
+                        let _ = std::fs::write(path, self.serialize());
+                        eprintln!("[state-dump] wrote state at PC {target:08x}");
+                    }
                 }
-                self.state_dumped = true;
             }
         }
         if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {

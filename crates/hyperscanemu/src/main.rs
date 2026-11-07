@@ -124,6 +124,7 @@ fn run_headless(
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!("fault at frame PC {:08x}: {}", emulator.cpu().pc(), error);
+        eprintln!("occurrence of dump target: {}", emulator.state_occurrence());
         eprintln!("registers: {registers}");
         if let Some(path) = std::env::var_os("HYPERSCANEMU_STATE_DUMP_PATH") {
             let _ = fs::write(Path::new(&path), emulator.serialize());
