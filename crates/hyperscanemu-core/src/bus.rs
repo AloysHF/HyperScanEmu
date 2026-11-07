@@ -155,13 +155,24 @@ impl Bus {
         }
         match address {
             0..=DRAM_END => {
-                if (address == 0x0015_1828 || address == 0x0004_1720 || address == 0x0004_12a8)
-                    && self.bios_trace.is_enabled()
-                {
-                    eprintln!(
-                        "[watch] write {:02x} at {address:06x} pc={:08x}",
-                        value, self.execution_pc
-                    );
+                if self.bios_trace.is_enabled() {
+                    if address == 0x0015_1828 || address == 0x0004_1720 || address == 0x0004_12a8 {
+                        eprintln!(
+                            "[watch] write {:02x} at {address:06x} pc={:08x}",
+                            value, self.execution_pc
+                        );
+                    }
+                    if (0x00ac_5000..0x00ac_6000).contains(&address) {
+                        static VWRITES: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = VWRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(20000) {
+                            eprintln!(
+                                "[vwrite] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
                 }
                 self.dram[address as usize % DRAM_SIZE] = value;
                 Ok(())
