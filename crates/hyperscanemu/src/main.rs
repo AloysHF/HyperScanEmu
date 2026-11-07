@@ -263,6 +263,13 @@ fn print_run_summary(emulator: &Emulator, frames: u64) -> Result<()> {
         emulator.bus().read_u32(0x0801_0064)?,
         emulator.bus().read_u32(0x0809_0020)?
     );
+    println!(
+        "layer sources: [{:08x}, {:08x}, {:08x}], sprite {}",
+        emulator.bus().read_u32(0x0801_0020)?,
+        emulator.bus().read_u32(0x0801_0038)?,
+        emulator.bus().read_u32(0x0801_0054)?,
+        emulator.bus().read_u32(0x0801_0008)?
+    );
     print_cd_trace(emulator);
     Ok(())
 }
