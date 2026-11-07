@@ -193,6 +193,17 @@ impl Bus {
         ensure_aligned(address, 4, "write")?;
         let masked = address & ADDRESS_MASK;
         if (MMIO_START..=MMIO_END).contains(&masked) {
+            if masked == 0x0801_0008 && self.bios_trace.is_enabled() {
+                static SPRITE_WRITES: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
+                let n = SPRITE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n < 6 {
+                    eprintln!(
+                        "[sprite-w] n={n} value={value:08x} pc={:08x}",
+                        self.execution_pc
+                    );
+                }
+            }
             return self.write_mmio_u32(masked, value);
         }
         let bytes = value.to_le_bytes();
