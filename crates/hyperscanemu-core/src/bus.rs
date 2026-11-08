@@ -246,7 +246,7 @@ impl Bus {
                 static PAL_WRITES: std::sync::atomic::AtomicU32 =
                     std::sync::atomic::AtomicU32::new(0);
                 let n = PAL_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if n < 60000 {
+                if n < 4000000 {
                     eprintln!(
                         "[pal-w] n={n} addr={masked:06x} val={value:08x} pc={:08x}",
                         self.execution_pc
