@@ -22,6 +22,7 @@ const SPU_END: u32 = 0x0805_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
 const SD_BASE: u32 = 0x0818_0000;
+const USB_BASE: u32 = 0x081b_0000;
 const SD_STATUS_TIMEOUT: u32 = 1 << 10;
 const C3_STUB_START: u32 = 0x0824_0000;
 const C3_STUB_END: u32 = 0x0824_ffff;
@@ -150,6 +151,11 @@ impl Spg290Devices {
                 0
             });
         }
+        if (USB_BASE..USB_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // USB-device controller: probed by some titles; no peripheral
+            // is modeled, reads return zero.
+            return Ok(0);
+        }
         if (CD_BASE..=CD_END).contains(&address) {
             return self
                 .cd
@@ -239,6 +245,10 @@ impl Spg290Devices {
         }
         if (SD_BASE..SD_BASE + 0x100).contains(&address) && address & 3 == 0 {
             // SD-card controller probes: accept the writes; no card responds.
+            return Ok(());
+        }
+        if (USB_BASE..USB_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // USB-device controller: accept the writes; no peripheral.
             return Ok(());
         }
         if (CD_BASE..=CD_END).contains(&address) {

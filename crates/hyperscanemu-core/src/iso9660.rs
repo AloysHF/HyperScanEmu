@@ -97,6 +97,11 @@ fn find_directory_entry(
         let mut offset = 0usize;
         while offset < USER_DATA_SIZE {
             let remaining = &sector[offset..];
+            if remaining.len() < RECORD_FIXED_HEADER {
+                // Not enough bytes for another record: skip to the next
+                // sector (records never span sector boundaries).
+                break;
+            }
             match parse_record(remaining)? {
                 Some(record) => {
                     let length = remaining[RECORD_LENGTH_FIELD] as usize;

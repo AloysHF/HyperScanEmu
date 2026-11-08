@@ -84,11 +84,22 @@ impl Bus {
         match address {
             0..=DRAM_END => {
                 let value = self.dram[address as usize % DRAM_SIZE];
-                if (crate::RESIDENT_DATA_START..crate::RESIDENT_DATA_END).contains(&address)
-                    && self.bios_trace.is_enabled()
-                {
-                    self.bios_trace
-                        .note_resident_data_read(self.execution_pc, address, value);
+                if self.bios_trace.is_enabled() {
+                    if (crate::RESIDENT_DATA_START..crate::RESIDENT_DATA_END).contains(&address) {
+                        self.bios_trace
+                            .note_resident_data_read(self.execution_pc, address, value);
+                    }
+                    if (0x0025_c800..0x0025_d000).contains(&address) {
+                        static MOVR: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = MOVR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 10 || n.is_multiple_of(20000) {
+                            eprintln!(
+                                "[mov-r] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
                 }
                 Ok(value)
             }

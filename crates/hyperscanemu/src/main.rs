@@ -112,6 +112,18 @@ fn run_headless(
                 cd.speed,
                 cd.frame_found,
             );
+            if std::env::var_os("HYPERSCANEMU_PLAYBACK_TRACE").is_some() {
+                let pointer = emulator.bus().read_u32(0xa015_1040).unwrap_or(0);
+                let mut words = Vec::new();
+                for index in 0..24 {
+                    let value = emulator
+                        .bus()
+                        .read_u32(pointer.wrapping_add(index * 4))
+                        .unwrap_or(0);
+                    words.push(format!("{:08x}", value));
+                }
+                eprintln!("  ctx@{pointer:08x}: {}", words.join(" "));
+            }
         }
         Ok(())
     });
