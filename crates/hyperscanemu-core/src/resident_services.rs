@@ -53,6 +53,10 @@ pub mod bios_field {
     pub const MODE_FIELD: u32 = 0xa004_12a4;
     pub const MODE_FIELD_2: u32 = 0xa004_12a8;
     pub const MODE_FLAG: u32 = 0xa004_2b70;
+    /// The game's sprite list (copied to the PPU sprite RAM per frame) and
+    /// its word-count limit.
+    pub const SPRITE_LIST: u32 = 0xa004_76b0;
+    pub const SPRITE_LIST_LIMIT: u32 = 0xa004_14dc;
 }
 
 /// PPU register the frame-tick service writes (measured 0xc500 body).
@@ -60,6 +64,8 @@ const PPU_FRAME_SERVICE_REG: u32 = 0x0801_0084;
 /// Sprite hardware config the firmware sprite manager publishes per frame.
 const SPRITE_CONFIG: u32 = 0x0801_0008;
 const SPRITE_CONFIG_VALUE: u32 = 0x1ff;
+/// The game's sprite list and limit in the firmware data area.
+const SPRITE_RAM_WORDS: u32 = 0x400;
 
 /// Interrupt source numbers from `devices.rs`.
 const TIMER_SOURCE: u8 = 56;
@@ -582,10 +588,19 @@ impl ResidentServices {
             let ticks = bus.read_u32(bios_field::FRAME_TICKS).unwrap_or(0);
             let _ = bus.write_u32(bios_field::FRAME_TICKS, ticks.wrapping_add(1));
             let _ = bus.write_u32(PPU_FRAME_SERVICE_REG, 1);
-            // The firmware sprite manager runs in the per-frame chain: the
-            // game fills its descriptor list after clearing the sprite
-            // register, and this service publishes the hardware config
-            // (measured: 0x1ff written every frame at pc 0x15268).
+            // The firmware sprite manager runs in the per-frame chain: it
+            // copies the game's sprite list (0xa00476b0) into the PPU
+            // sprite RAM window (0x8801_4000), bounded by the limit field
+            // (measured: 14 words per frame at pc 0x15220/0x15244), and
+            // publishes the hardware config (0x1ff at pc 0x15268).
+            let limit = bus.read_u32(bios_field::SPRITE_LIST_LIMIT).unwrap_or(0);
+            let words = limit.min(SPRITE_RAM_WORDS);
+            for index in 0..words {
+                let word = bus
+                    .read_u32(bios_field::SPRITE_LIST + index * 4)
+                    .unwrap_or(0);
+                let _ = bus.write_u32(0x8801_4000 + index * 4, word);
+            }
             let _ = bus.write_u32(SPRITE_CONFIG, SPRITE_CONFIG_VALUE);
         }
         if let Some(frame) = self.irq_frames.pop() {
