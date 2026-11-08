@@ -93,7 +93,7 @@ impl Bus {
                         static MOVR: std::sync::atomic::AtomicU32 =
                             std::sync::atomic::AtomicU32::new(0);
                         let n = MOVR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if n < 10 || n.is_multiple_of(20000) {
+                        if n < 10 || n.is_multiple_of(500) {
                             eprintln!(
                                 "[mov-r] n={n} addr={address:06x} pc={:08x}",
                                 self.execution_pc
