@@ -57,6 +57,8 @@ pub mod bios_field {
     /// its word-count limit.
     pub const SPRITE_LIST: u32 = 0xa004_76b0;
     pub const SPRITE_LIST_LIMIT: u32 = 0xa004_14dc;
+    /// The game's runtime sprite list (filled by the game's compiler).
+    pub const GAME_SPRITE_LIST: u32 = 0xa015_0ab0;
 }
 
 /// PPU register the frame-tick service writes (measured 0xc500 body).
