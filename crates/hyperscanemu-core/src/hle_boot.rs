@@ -594,7 +594,9 @@ pub fn boot(cpu: &mut Score7, bus: &mut Bus, disc: &DiscImage) -> Result<(), Emu
         current_sector: 7765,
         seek_lba: 425,
         skip: 2,
-        speed: 1,
+        // The firmware's own driver loads at double speed; the game's raw
+        // streaming inherits this setting.
+        speed: 2,
         frame_found: true,
     });
     cpu.set_pc(GAME_ENTRY);

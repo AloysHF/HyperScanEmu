@@ -94,6 +94,8 @@ pub mod entry {
     pub const CRITICAL_LEAVE: u32 = 0x08cc;
     /// Mode-field query returning whether the field equals -1.
     pub const MODE_QUERY: u32 = 0x0a28;
+    /// Tick counter read (same counter as 0xa94's slot at 0x1434).
+    pub const TICKS_GET2: u32 = 0x0a9a;
     /// MIU/PPU DMA setup writing measured register windows.
     pub const DMA_SETUP: u32 = 0x0b00;
     /// Memory-control unlock sequence plus a status query.
@@ -206,6 +208,7 @@ impl ResidentServices {
                     | entry::VBLANK_REGISTER
                     | entry::HANDLER_REGISTER
                     | entry::TICKS_GET
+                    | entry::TICKS_GET2
                     | entry::FILE_OPEN
                     | entry::FILE_READ
                     | entry::FILE_CLOSE
@@ -272,7 +275,7 @@ impl ResidentServices {
                 self.irq_handlers.push((TIMER_SOURCE, handler));
                 self.return_register(cpu, entry)
             }
-            entry::TICKS_GET => {
+            entry::TICKS_GET | entry::TICKS_GET2 => {
                 let ticks = bus.read_u32(bios_field::TICKS)?;
                 cpu.set_register(4, ticks)?;
                 self.return_register(cpu, entry)
