@@ -178,6 +178,17 @@ impl Bus {
                             value, self.execution_pc
                         );
                     }
+                    if (0x0004_2c40..0x0004_2c70).contains(&address) {
+                        static TR: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = TR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 30 || n.is_multiple_of(5000) {
+                            eprintln!(
+                                "[timer-r] n={n} addr={address:06x} val={value:02x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
                     if (0x0023_7000..0x0023_9000).contains(&address) {
                         static LW: std::sync::atomic::AtomicU32 =
                             std::sync::atomic::AtomicU32::new(0);
