@@ -105,6 +105,11 @@ pub mod entry {
     /// Memory-control unlock sequence plus a status query.
     pub const MEM_CONTROL: u32 = 0x08e4;
     pub const FRAME_TICK: u32 = 0xc500;
+    /// Generic service entries: the full firmware trampoline surface
+    /// (0x800-0xb30); the measured bodies are decoded per entry as titles
+    /// exercise them.
+    pub const GENERIC_SERVICE_START: u32 = 0x0800;
+    pub const GENERIC_SERVICE_END: u32 = 0x0b30;
 }
 
 /// Why a resident-service dispatch could not be completed.
@@ -228,7 +233,8 @@ impl ResidentServices {
                     | entry::DMA_SETUP
                     | entry::MEM_CONTROL
                     | entry::FRAME_TICK
-            ) {
+            ) || (entry::GENERIC_SERVICE_START..entry::GENERIC_SERVICE_END).contains(&pc)
+            {
                 return Some(ResidentFetch::Service(pc));
             }
             // IRQ vector slots are dispatched natively and never fetched.
@@ -409,6 +415,15 @@ impl ResidentServices {
             entry::FILE_QUERY => {
                 cpu.set_register(4, 1)?;
                 self.return_register(cpu, entry)
+            }
+            // Generic services: the measured bodies perform small field
+            // stores/loads; serving them with a zero return preserves the
+            // call flow while the per-entry semantics are decoded.
+            other
+                if (entry::GENERIC_SERVICE_START..entry::GENERIC_SERVICE_END).contains(&other) =>
+            {
+                cpu.set_register(4, 0)?;
+                self.return_auto(cpu, bus, entry)
             }
             entry::FRAME_TICK => {
                 let ticks = bus.read_u32(bios_field::FRAME_TICKS)?;
