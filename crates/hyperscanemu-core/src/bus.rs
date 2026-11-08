@@ -171,7 +171,7 @@ impl Bus {
                         || address == 0x0004_1720
                         || address == 0x0004_12a8
                         || (0x0004_7600..0x0004_7800).contains(&address)
-                        || (0x0015_0ab0..0x0015_0e00).contains(&address)
+                        || (0x0015_0d00..0x0015_0e80).contains(&address)
                     {
                         eprintln!(
                             "[watch] write {:02x} at {address:06x} pc={:08x}",
