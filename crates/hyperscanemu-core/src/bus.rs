@@ -156,11 +156,26 @@ impl Bus {
         match address {
             0..=DRAM_END => {
                 if self.bios_trace.is_enabled() {
-                    if address == 0x0015_1828 || address == 0x0004_1720 || address == 0x0004_12a8 {
+                    if address == 0x0015_1828
+                        || address == 0x0004_1720
+                        || address == 0x0004_12a8
+                        || (0x0004_7600..0x0004_7800).contains(&address)
+                    {
                         eprintln!(
                             "[watch] write {:02x} at {address:06x} pc={:08x}",
                             value, self.execution_pc
                         );
+                    }
+                    if (0x0023_7000..0x0023_9000).contains(&address) {
+                        static LW: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = LW.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(50000) {
+                            eprintln!(
+                                "[layer0-w] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
                     }
                     if (0x00ac_5000..0x00ac_6000).contains(&address) {
                         static VWRITES: std::sync::atomic::AtomicU32 =
