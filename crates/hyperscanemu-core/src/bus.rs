@@ -189,6 +189,17 @@ impl Bus {
                             );
                         }
                     }
+                    if (0x002f_8b00..0x002f_a000).contains(&address) {
+                        static SP: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = SP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(20000) {
+                            eprintln!(
+                                "[sprpat-w] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
                     if (0x0023_7000..0x0023_9000).contains(&address) {
                         static LW: std::sync::atomic::AtomicU32 =
                             std::sync::atomic::AtomicU32::new(0);
