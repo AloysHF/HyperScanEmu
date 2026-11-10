@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use hyperscanemu_core::{CdCommandKind, Emulator, Firmware, StepOutcome};
+use hyperscanemu_core::{CdCommandKind, Emulator, StepOutcome};
 use hyperscanemu_media::load_disc;
 
 mod audio_output;
@@ -12,6 +12,7 @@ mod input;
 mod standalone;
 
 use cli::{Cli, PlayOptions};
+use standalone::load_firmware;
 
 fn main() -> Result<()> {
     let args = Cli::parse();
@@ -43,6 +44,7 @@ fn main() -> Result<()> {
         run_headless(
             &args.system_dir,
             media,
+            args.hle_boot,
             frames,
             args.output.as_deref(),
             args.screenshot.as_deref(),
@@ -53,6 +55,7 @@ fn main() -> Result<()> {
     let options = PlayOptions {
         system_dir: args.system_dir.clone(),
         media: media.to_path_buf(),
+        hle_boot: args.hle_boot,
         scale: args.scale,
         fullscreen: args.fullscreen,
         volume: args.volume,
@@ -78,19 +81,25 @@ fn inspect_disc(media: &Path) -> Result<()> {
 fn run_headless(
     system_dir: &Path,
     media: &Path,
+    force_hle: bool,
     frames: u64,
     output: Option<&Path>,
     screenshot: Option<&Path>,
 ) -> Result<()> {
-    let firmware = load_firmware(system_dir)?;
     let disc = load_disc(media)?;
-    let mut emulator = Emulator::new(firmware);
+    let mut emulator = match load_firmware(system_dir, force_hle)? {
+        Some(firmware) => Emulator::new(firmware),
+        None => Emulator::new_hle(),
+    };
     emulator.attach_disc(disc);
+    if emulator.boot_mode() == hyperscanemu_core::BootMode::Hle {
+        emulator.boot_hle()?;
+    }
     let trace_interval = std::env::var("HYPERSCANEMU_FRAME_TRACE_INTERVAL")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|interval| *interval != 0);
-    for frame in 1..=frames {
+    let run_result = (1..=frames).try_for_each(|frame| {
         emulator.run_frame()?;
         if trace_interval.is_some_and(|interval| frame % interval == 0) {
             let cd = emulator.cd_servo_state();
@@ -103,10 +112,89 @@ fn run_headless(
                 cd.speed,
                 cd.frame_found,
             );
+            if std::env::var_os("HYPERSCANEMU_PLAYBACK_TRACE").is_some() {
+                let pointer = emulator.bus().read_u32(0xa015_1040).unwrap_or(0);
+                let mut words = Vec::new();
+                for index in 0..24 {
+                    let value = emulator
+                        .bus()
+                        .read_u32(pointer.wrapping_add(index * 4))
+                        .unwrap_or(0);
+                    words.push(format!("{:08x}", value));
+                }
+                eprintln!("  ctx@{pointer:08x}: {}", words.join(" "));
+            }
         }
+        Ok(())
+    });
+    if let Err(error) = run_result {
+        let registers = (0..32)
+            .filter_map(|index| {
+                let value = emulator.cpu().register(index)?;
+                (value != 0).then_some(format!("r{index}={value:08x}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("fault at frame PC {:08x}: {}", emulator.cpu().pc(), error);
+        eprintln!("occurrence of dump target: {}", emulator.state_occurrence());
+        eprintln!("registers: {registers}");
+        if let Some(path) = std::env::var_os("HYPERSCANEMU_STATE_DUMP_PATH") {
+            let _ = fs::write(Path::new(&path), emulator.serialize());
+        }
+        if let Some(path) = std::env::var_os("HYPERSCANEMU_RESIDENT_DATA_DUMP") {
+            let samples = emulator.resident_data_samples();
+            let mut text = String::new();
+            for ((pc, address), value) in samples {
+                text.push_str(&format!(
+                    "{pc:08x} {address:06x} {value:02x}
+"
+                ));
+            }
+            let _ = fs::write(Path::new(&path), text);
+        }
+        return Err(error);
     }
     print_uart(&mut emulator);
     print_run_summary(&emulator, frames)?;
+    if let Some(summary) = emulator.bios_activity_summary() {
+        println!("{summary}");
+    }
+    if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+        for (address, count) in emulator.bus().mmio_read_summary() {
+            println!("[mmio-profile] {address:08x} {count}");
+        }
+    }
+    if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+        for (pc, count) in emulator.pc_profile_summary() {
+            println!("[pc-profile] {pc:08x} {count}");
+        }
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_FINAL_DRAM_DUMP") {
+        let dram = emulator.bus().dram_contents();
+        let path = Path::new(&path);
+        fs::write(path, dram).with_context(|| format!("failed to write {}", path.display()))?;
+        println!("wrote final DRAM dump to {}", path.display());
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_RESIDENT_DATA_DUMP") {
+        let samples = emulator.resident_data_samples();
+        let mut text = String::new();
+        for ((pc, address), value) in samples {
+            text.push_str(&format!(
+                "{pc:08x} {address:06x} {value:02x}
+"
+            ));
+        }
+        let path = Path::new(&path);
+        fs::write(path, text).with_context(|| format!("failed to write {}", path.display()))?;
+        println!("wrote resident data samples to {}", path.display());
+    }
+    if let Some(path) = std::env::var_os("HYPERSCANEMU_HANDOFF_DRAM_DUMP") {
+        if let Some(dram) = emulator.take_handoff_dram() {
+            let path = Path::new(&path);
+            fs::write(path, dram).with_context(|| format!("failed to write {}", path.display()))?;
+            println!("wrote handoff DRAM dump to {}", path.display());
+        }
+    }
     if let Some(path) = output {
         let (width, height) = emulator.display_size();
         fs::write(path, encode_ppm(emulator.framebuffer(), width, height))
@@ -121,7 +209,8 @@ fn run_headless(
 }
 
 fn trace(system_dir: &Path, steps: u64) -> Result<()> {
-    let firmware = load_firmware(system_dir)?;
+    let firmware = hyperscanemu_core::firmware::load(system_dir)
+        .context("the instruction trace executes real firmware and requires it")?;
     let mut emulator = Emulator::new(firmware);
     let start_pc = emulator.cpu().pc();
     let start_cycles = emulator.cpu().cycles();
@@ -159,24 +248,24 @@ fn trace(system_dir: &Path, steps: u64) -> Result<()> {
         exceptions,
         emulator.bus().boot_source()
     );
+    if let Some(summary) = emulator.bios_activity_summary() {
+        println!("{summary}");
+    }
     Ok(())
-}
-
-fn load_firmware(system_dir: &Path) -> Result<Firmware> {
-    hyperscanemu_core::firmware::load(system_dir).map_err(Into::into)
 }
 
 fn print_run_summary(emulator: &Emulator, frames: u64) -> Result<()> {
     let (width, height) = emulator.display_size();
     println!(
-        "completed {} frame(s): {}x{}, frame fingerprint {:016x}, PC {:08x}, PPU {:08x}, TVE {:08x}",
+        "completed {} frame(s): {}x{}, frame fingerprint {:016x}, PC {:08x}, PPU {:08x}, TVE {:08x}, boot {}",
         frames,
         width,
         height,
         frame_fingerprint(emulator.framebuffer()),
         emulator.cpu().pc(),
         emulator.bus().read_u32(0x0801_0000)?,
-        emulator.bus().read_u32(0x0803_0000)?
+        emulator.bus().read_u32(0x0803_0000)?,
+        emulator.emulation_strategy(),
     );
     println!(
         "video state: sprites {:08x}, layers [{:08x}, {:08x}, {:08x}], TV buffer {}",
@@ -185,6 +274,14 @@ fn print_run_summary(emulator: &Emulator, frames: u64) -> Result<()> {
         emulator.bus().read_u32(0x0801_0048)?,
         emulator.bus().read_u32(0x0801_0064)?,
         emulator.bus().read_u32(0x0809_0020)?
+    );
+    println!(
+        "layer buffers: [{:08x}, {:08x}, {:08x}], sprite {}, max {}",
+        emulator.bus().read_u32(0x0801_00a0)?,
+        emulator.bus().read_u32(0x0801_00ac)?,
+        emulator.bus().read_u32(0x0801_00b8)?,
+        emulator.bus().read_u32(0x0801_00d0)?,
+        emulator.bus().read_u32(0x0801_0008)?
     );
     print_cd_trace(emulator);
     Ok(())

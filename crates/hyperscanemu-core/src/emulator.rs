@@ -9,6 +9,17 @@ pub const EMULATION_STRATEGY: &str = "lle";
 const INITIAL_DISPLAY_WIDTH: usize = 320;
 const INITIAL_DISPLAY_HEIGHT: usize = 240;
 
+/// How the machine enters the game: through the real firmware (LLE) or
+/// through the HLE boot path without firmware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BootMode {
+    /// Boot through the real firmware ROMs.
+    #[default]
+    Firmware,
+    /// Boot the game directly with the measured handoff state.
+    Hle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionReport {
     pub instructions: u64,
@@ -23,6 +34,14 @@ pub struct Emulator {
     cpu: Score7,
     bus: Bus,
     disc: Option<DiscImage>,
+    boot_mode: BootMode,
+    resident: crate::resident_services::ResidentServices,
+    pc_profile: std::collections::HashMap<u32, u64>,
+    state_dump_pc: std::sync::OnceLock<Option<u32>>,
+    state_dumped: bool,
+    state_occurrence: u64,
+    state_dump_occurrence: std::sync::OnceLock<u64>,
+    stack_probe: std::sync::OnceLock<bool>,
     framebuffer: Vec<u32>,
     audio_samples: Vec<i16>,
     uart_output: Vec<u8>,
@@ -33,10 +52,28 @@ pub struct Emulator {
 }
 impl Emulator {
     pub fn new(firmware: Firmware) -> Self {
+        Self::with_bus(Bus::new(firmware), BootMode::Firmware)
+    }
+
+    /// Machine without firmware; call [`Emulator::boot_hle`] after attaching
+    /// a disc.
+    pub fn new_hle() -> Self {
+        Self::with_bus(Bus::new_hle(), BootMode::Hle)
+    }
+
+    fn with_bus(bus: Bus, boot_mode: BootMode) -> Self {
         Self {
             cpu: Score7::new(),
-            bus: Bus::new(firmware),
+            bus,
             disc: None,
+            boot_mode,
+            resident: crate::resident_services::ResidentServices::new(),
+            pc_profile: std::collections::HashMap::new(),
+            state_dump_pc: std::sync::OnceLock::new(),
+            state_dumped: false,
+            state_occurrence: 0,
+            state_dump_occurrence: std::sync::OnceLock::new(),
+            stack_probe: std::sync::OnceLock::new(),
             framebuffer: vec![0; INITIAL_DISPLAY_WIDTH * INITIAL_DISPLAY_HEIGHT],
             audio_samples: Vec::new(),
             uart_output: Vec::new(),
@@ -47,7 +84,20 @@ impl Emulator {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Boot mode selected for this machine.
+    pub fn boot_mode(&self) -> BootMode {
+        self.boot_mode
+    }
+
+    /// Emulation strategy in effect: `lle` with firmware, `hle` without.
+    pub fn emulation_strategy(&self) -> &'static str {
+        match self.boot_mode {
+            BootMode::Firmware => EMULATION_STRATEGY,
+            BootMode::Hle => "hle",
+        }
+    }
+
+    pub fn reset(&mut self) -> Result<(), EmulatorError> {
         self.cpu.reset();
         self.bus.reset();
         self.bus.set_disc(self.disc.as_ref());
@@ -60,6 +110,19 @@ impl Emulator {
         self.frame_index = 0;
         self.display_width = INITIAL_DISPLAY_WIDTH;
         self.display_height = INITIAL_DISPLAY_HEIGHT;
+        if self.boot_mode == BootMode::Hle {
+            let disc = self.disc.as_ref().ok_or(EmulatorError::InvalidDisc(
+                "HLE boot requires an attached game disc",
+            ))?;
+            crate::hle_boot::boot(&mut self.cpu, &mut self.bus, disc)?;
+        }
+        Ok(())
+    }
+
+    /// Boot the attached disc through the HLE path without firmware.
+    pub fn boot_hle(&mut self) -> Result<(), EmulatorError> {
+        self.boot_mode = BootMode::Hle;
+        self.reset()
     }
 
     pub fn set_input(&mut self, input: InputState) {
@@ -98,6 +161,42 @@ impl Emulator {
         self.bus.cd_servo_state()
     }
 
+    /// End-of-run firmware activity summary, `None` while the
+    /// `HYPERSCANEMU_TRACE_BIOS_FETCH` trace is disabled.
+    pub fn bios_activity_summary(&self) -> Option<String> {
+        self.bus.bios_activity_summary()
+    }
+
+    /// Take the DRAM image captured at the BIOS-to-game handoff, if the
+    /// trace captured one.
+    pub fn take_handoff_dram(&mut self) -> Option<Vec<u8>> {
+        self.bus.take_handoff_dram()
+    }
+
+    /// First-read samples of the firmware-resident data area (diff oracle).
+    pub fn resident_data_samples(&self) -> Vec<((u32, u32), u8)> {
+        self.bus.resident_data_samples()
+    }
+
+    /// Occurrence count of the state-dump target PC.
+    pub fn state_occurrence(&self) -> u64 {
+        self.state_occurrence
+    }
+
+    /// Saved PCs of the in-flight native delivery frames.
+    pub fn irq_frame_pcs(&self) -> Vec<u32> {
+        self.resident.irq_frame_pcs()
+    }
+
+    /// Top executed PCs when `HYPERSCANEMU_PC_PROFILE` is set.
+    pub fn pc_profile_summary(&self) -> Vec<(u32, u64)> {
+        let mut entries: Vec<(u32, u64)> =
+            self.pc_profile.iter().map(|(pc, n)| (*pc, *n)).collect();
+        entries.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
+        entries.truncate(24);
+        entries
+    }
+
     pub fn cpu(&self) -> &Score7 {
         &self.cpu
     }
@@ -107,19 +206,137 @@ impl Emulator {
     }
 
     pub fn step(&mut self) -> Result<StepOutcome, EmulatorError> {
+        if self
+            .stack_probe
+            .get_or_init(|| std::env::var_os("HYPERSCANEMU_STACK_PROBE").is_some())
+            == &true
+            && !self.state_dumped
+            && self.boot_mode == BootMode::Hle
+        {
+            let sp = self.cpu.register(0).unwrap_or(0);
+            if sp != 0 && sp < 0x0100_0000 {
+                let registers = (0..32)
+                    .filter_map(|index| {
+                        let value = self.cpu.register(index)?;
+                        Some(format!("r{index}={value:08x}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "[stack-probe] r0 broken: sp={sp:08x} pc={:08x} cr3={:08x}",
+                    self.cpu.pc(),
+                    self.cpu
+                        .control_register(crate::cpu::CR_EXCEPTION_VECTOR)
+                        .unwrap_or(0)
+                );
+                eprintln!("registers: {registers}");
+                self.state_dumped = true;
+            }
+        }
+        let target = *self.state_dump_pc.get_or_init(|| {
+            std::env::var("HYPERSCANEMU_STATE_DUMP_AT_PC")
+                .ok()
+                .and_then(|value| u32::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        });
+        if let Some(target) = target {
+            if self.cpu.pc() & crate::ADDRESS_MASK == target {
+                self.state_occurrence += 1;
+                let wanted = *self.state_dump_occurrence.get_or_init(|| {
+                    std::env::var("HYPERSCANEMU_STATE_DUMP_OCCURRENCE")
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(1)
+                });
+                if self.state_occurrence == wanted {
+                    if let Ok(path) = std::env::var("HYPERSCANEMU_STATE_DUMP_PATH") {
+                        let _ = std::fs::write(path, self.serialize());
+                        eprintln!("[state-dump] wrote state at PC {target:08x}");
+                    }
+                }
+            }
+        }
+        if std::env::var_os("HYPERSCANEMU_PC_PROFILE").is_some() {
+            let count = self.pc_profile.entry(self.cpu.pc() & !1).or_insert(0);
+            *count += 1;
+        }
         self.bus
             .set_execution_context(self.cpu.pc(), self.cpu.register(3).unwrap_or(0));
-        let outcome = self.cpu.step(&mut self.bus)?;
-        if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
-            self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+        // A blocking service call parks the CPU; delivery frames (if a
+        // handler was interrupted) still execute until they return.
+        let parked = self.boot_mode == BootMode::Hle
+            && self.resident.blocked_delay()
+            && !self.resident.irq_frames();
+        if !parked && self.boot_mode == BootMode::Hle {
+            use crate::resident_services::{ResidentFetch, ResidentServices};
+            match ResidentServices::classify(self.cpu.pc() & crate::ADDRESS_MASK) {
+                Some(ResidentFetch::IrqReturn) => {
+                    self.resident.return_from_irq(&mut self.cpu, &mut self.bus);
+                }
+                Some(ResidentFetch::Service(entry)) => {
+                    self.resident.handle_service(
+                        &mut self.cpu,
+                        &mut self.bus,
+                        self.disc.as_ref(),
+                        entry,
+                    )?;
+                }
+                Some(ResidentFetch::Unhandled(pc)) => {
+                    let cause = self.cpu.control_register(crate::cpu::CR_ECR).unwrap_or(0);
+                    let registers = (0..32)
+                        .filter_map(|index| {
+                            let value = self.cpu.register(index)?;
+                            Some(format!("r{index}={value:08x}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    eprintln!("[svc-unhandled] pc={pc:04x} ecr={cause:08x} {}", registers);
+                    return Err(EmulatorError::Resident(
+                        crate::resident_services::ResidentError::UnhandledResidentEntry { pc },
+                    ));
+                }
+                None => {}
+            }
         }
+        let outcome = if parked {
+            // Time passes while the service sleeps.
+            self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+            StepOutcome::Advanced { width: 4 }
+        } else {
+            let outcome = self.cpu.step(&mut self.bus)?;
+            if !matches!(outcome, StepOutcome::Exception { width: 0, .. }) {
+                self.bus.tick(CYCLES_PER_INSTRUCTION_ESTIMATE)?;
+            }
+            outcome
+        };
         if let Some(disc) = &self.disc {
             self.bus.service_cd(disc)?;
         }
-        let pending = self.bus.take_pending_interrupts();
-        for source in 1..64 {
-            if pending & (1_u64 << source) != 0 {
-                self.cpu.request_interrupt(source)?;
+        let mut pending = self.bus.take_pending_interrupts();
+        if self.boot_mode == BootMode::Hle {
+            pending |= self.resident.carry();
+            // Deliver at most one source per step, highest vector first like
+            // the CPU's arbitration, and only while interrupts are enabled;
+            // everything else stays pending until the handler returns.
+            if pending != 0 && self.resident.delivery_allowed(&self.cpu) {
+                let source = 63 - pending.leading_zeros();
+                let source = u8::try_from(source).unwrap_or(0);
+                // Delivered or dropped (no handler): the source leaves the
+                // pending set either way.
+                let _ = self
+                    .resident
+                    .deliver_irq(&mut self.cpu, &mut self.bus, source);
+                pending &= !(1_u64 << source);
+            }
+            self.resident.set_carry(pending);
+            // The tail advanced the delay counter; wake the parked call.
+            if parked {
+                self.resident.poll_blocked(&mut self.cpu, &mut self.bus);
+            }
+        } else {
+            for source in 1..64 {
+                if pending & (1_u64 << source) != 0 {
+                    self.cpu.request_interrupt(source)?;
+                }
             }
         }
         Ok(outcome)
@@ -296,7 +513,7 @@ mod tests {
                 crate::ControllerState::default(),
             ],
         });
-        emulator.reset();
+        emulator.reset().unwrap();
 
         assert_eq!(emulator.frame_index(), 0);
         assert_eq!(emulator.framebuffer().len(), 320 * 240);

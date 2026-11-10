@@ -1,6 +1,8 @@
+use std::fmt::Write as _;
+
 use crate::{
-    video::rgb565_to_xrgb8888, CardImage, DiscImage, EmulatorError, Firmware, InputState,
-    Spg290Devices,
+    video::rgb565_to_xrgb8888, BiosActivity, CardImage, DiscImage, EmulatorError, FetchEvent,
+    Firmware, InputState, Spg290Devices,
 };
 
 pub const ADDRESS_MASK: u32 = 0x1fff_ffff;
@@ -22,23 +24,42 @@ pub enum BootSource {
     ExternalRom,
 }
 
+/// Firmware fingerprint reported when no firmware is loaded (HLE boot).
+pub const HLE_FIRMWARE_FINGERPRINT: u64 = 0;
+
 #[derive(Debug, Clone)]
 pub struct Bus {
     dram: Box<[u8]>,
     internal_sram: Box<[u8]>,
-    firmware: Firmware,
+    firmware: Option<Firmware>,
     boot_source: BootSource,
     devices: Spg290Devices,
+    bios_trace: BiosActivity,
+    handoff_dram: Option<Vec<u8>>,
+    execution_pc: u32,
 }
 
 impl Bus {
     pub fn new(firmware: Firmware) -> Self {
+        Self::with_firmware(Some(firmware))
+    }
+
+    /// Bus without firmware for the HLE boot path. Reads of either firmware
+    /// ROM window fault.
+    pub fn new_hle() -> Self {
+        Self::with_firmware(None)
+    }
+
+    fn with_firmware(firmware: Option<Firmware>) -> Self {
         Self {
             dram: vec![0; DRAM_SIZE].into_boxed_slice(),
             internal_sram: vec![0; INTERNAL_SRAM_SIZE].into_boxed_slice(),
             firmware,
             boot_source: BootSource::ExternalRom,
             devices: Spg290Devices::new(),
+            bios_trace: BiosActivity::new(),
+            handoff_dram: None,
+            execution_pc: 0,
         }
     }
 
@@ -47,6 +68,7 @@ impl Bus {
         self.internal_sram.fill(0);
         self.boot_source = BootSource::ExternalRom;
         self.devices.reset();
+        self.bios_trace = BiosActivity::new();
     }
 
     pub fn boot_source(&self) -> BootSource {
@@ -60,16 +82,45 @@ impl Bus {
     pub fn read_u8(&self, address: u32) -> Result<u8, EmulatorError> {
         let address = address & ADDRESS_MASK;
         match address {
-            0..=DRAM_END => Ok(self.dram[address as usize % DRAM_SIZE]),
+            0..=DRAM_END => {
+                let value = self.dram[address as usize % DRAM_SIZE];
+                if self.bios_trace.is_enabled() {
+                    if (crate::RESIDENT_DATA_START..crate::RESIDENT_DATA_END).contains(&address) {
+                        self.bios_trace
+                            .note_resident_data_read(self.execution_pc, address, value);
+                    }
+                    if (0x0025_c800..0x0025_d000).contains(&address) {
+                        static MOVR: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = MOVR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 10 || n.is_multiple_of(500) {
+                            eprintln!(
+                                "[mov-r] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
+                }
+                Ok(value)
+            }
             MMIO_START..=MMIO_END => {
                 let shift = (address & 3) * 8;
-                Ok((self.devices.read_u32(address & !3)? >> shift) as u8)
+                let value = (self.devices.read_u32(address & !3)? >> shift) as u8;
+                if self.bios_trace.is_enabled() {
+                    self.bios_trace.note_mmio_read(address & !3, value);
+                }
+                Ok(value)
             }
             INTERNAL_SRAM_START..=0x0a00_3fff => {
                 Ok(self.internal_sram[(address - INTERNAL_SRAM_START) as usize])
             }
             INTERNAL_ROM_START..=0x0b00_7fff => {
-                Ok(self.firmware.internal_rom()[(address - INTERNAL_ROM_START) as usize])
+                self.bios_trace.note_rom_byte_read(address);
+                let firmware = self
+                    .firmware
+                    .as_ref()
+                    .ok_or_else(|| memory_fault("read", address, 1))?;
+                Ok(firmware.internal_rom()[(address - INTERNAL_ROM_START) as usize])
             }
             EXTERNAL_ROM_START..=EXTERNAL_ROM_END => self.read_external_window(address),
             _ => Err(memory_fault("read", address, 1)),
@@ -86,7 +137,11 @@ impl Bus {
         ensure_aligned(address, 4, "read")?;
         let masked = address & ADDRESS_MASK;
         if (MMIO_START..=MMIO_END).contains(&masked) {
-            return self.devices.read_u32(masked);
+            let value = self.devices.read_u32(masked)?;
+            if self.bios_trace.is_enabled() {
+                self.bios_trace.note_mmio_read(masked, 0);
+            }
+            return Ok(value);
         }
         let bytes = [
             self.read_u8(address)?,
@@ -99,6 +154,9 @@ impl Bus {
 
     pub fn write_u8(&mut self, address: u32, value: u8) -> Result<(), EmulatorError> {
         let address = address & ADDRESS_MASK;
+        if address == 0x0818_001c && self.bios_trace.is_enabled() {
+            eprintln!("[sd-watch] write {value:02x} pc={:08x}", self.execution_pc);
+        }
         if (MMIO_START..=MMIO_END).contains(&address) {
             let aligned = address & !3;
             let shift = (address & 3) * 8;
@@ -108,6 +166,63 @@ impl Bus {
         }
         match address {
             0..=DRAM_END => {
+                if self.bios_trace.is_enabled() {
+                    if address == 0x0015_1828
+                        || address == 0x0004_1720
+                        || address == 0x0004_12a8
+                        || (0x0004_7600..0x0004_7800).contains(&address)
+                        || (0x0015_0d00..0x0015_0e80).contains(&address)
+                    {
+                        eprintln!(
+                            "[watch] write {:02x} at {address:06x} pc={:08x}",
+                            value, self.execution_pc
+                        );
+                    }
+                    if (0x0004_2c40..0x0004_2c70).contains(&address) {
+                        static TR: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = TR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 30 || n.is_multiple_of(5000) {
+                            eprintln!(
+                                "[timer-r] n={n} addr={address:06x} val={value:02x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
+                    if (0x002f_8b00..0x002f_a000).contains(&address) {
+                        static SP: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = SP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(20000) {
+                            eprintln!(
+                                "[sprpat-w] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
+                    if (0x0023_7000..0x0023_9000).contains(&address) {
+                        static LW: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = LW.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(50000) {
+                            eprintln!(
+                                "[layer0-w] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
+                    if (0x00ac_5000..0x00ac_6000).contains(&address) {
+                        static VWRITES: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        let n = VWRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 8 || n.is_multiple_of(20000) {
+                            eprintln!(
+                                "[vwrite] n={n} addr={address:06x} pc={:08x}",
+                                self.execution_pc
+                            );
+                        }
+                    }
+                }
                 self.dram[address as usize % DRAM_SIZE] = value;
                 Ok(())
             }
@@ -138,6 +253,28 @@ impl Bus {
         ensure_aligned(address, 4, "write")?;
         let masked = address & ADDRESS_MASK;
         if (MMIO_START..=MMIO_END).contains(&masked) {
+            if self.bios_trace.is_enabled() && masked >= 0x0801_1000 {
+                static PAL_WRITES: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
+                let n = PAL_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n < 4000000 {
+                    eprintln!(
+                        "[pal-w] n={n} addr={masked:06x} val={value:08x} pc={:08x}",
+                        self.execution_pc
+                    );
+                }
+            }
+            if masked == 0x0801_0008 && self.bios_trace.is_enabled() {
+                static SPRITE_WRITES: std::sync::atomic::AtomicU32 =
+                    std::sync::atomic::AtomicU32::new(0);
+                let n = SPRITE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n < 6 {
+                    eprintln!(
+                        "[sprite-w] n={n} value={value:08x} pc={:08x}",
+                        self.execution_pc
+                    );
+                }
+            }
             return self.write_mmio_u32(masked, value);
         }
         let bytes = value.to_le_bytes();
@@ -148,7 +285,21 @@ impl Bus {
     }
 
     pub fn firmware_fingerprint(&self) -> u64 {
-        self.firmware.fingerprint()
+        self.firmware
+            .as_ref()
+            .map_or(HLE_FIRMWARE_FINGERPRINT, Firmware::fingerprint)
+    }
+
+    /// Copy bytes into guest DRAM at `address`, as the firmware loader does.
+    pub fn load_dram(&mut self, address: u32, bytes: &[u8]) -> Result<(), EmulatorError> {
+        let offset = (address & ADDRESS_MASK) as usize % DRAM_SIZE;
+        if offset + bytes.len() > DRAM_SIZE {
+            return Err(EmulatorError::InvalidDisc(
+                "the game image does not fit in the DRAM load window",
+            ));
+        }
+        self.dram[offset..offset + bytes.len()].copy_from_slice(bytes);
+        Ok(())
     }
 
     fn write_mmio_u32(&mut self, address: u32, value: u32) -> Result<(), EmulatorError> {
@@ -185,6 +336,11 @@ impl Bus {
         self.devices.eject_card()
     }
 
+    /// Initialize the CD servo to the firmware's post-identification state.
+    pub fn initialize_cd_servo(&mut self, state: crate::CdServoState) {
+        self.devices.set_cd_servo_state(state);
+    }
+
     pub fn set_disc(&mut self, disc: Option<&DiscImage>) {
         self.devices.set_disc(disc.map(DiscImage::sector_count));
     }
@@ -194,6 +350,7 @@ impl Bus {
     }
 
     pub(crate) fn set_execution_context(&mut self, pc: u32, link: u32) {
+        self.execution_pc = pc & ADDRESS_MASK;
         self.devices.set_execution_context(pc, link);
     }
 
@@ -201,9 +358,138 @@ impl Bus {
         self.devices.cd_servo_state()
     }
 
+    /// Feed one instruction fetch into the firmware activity trace.
+    pub fn begin_bios_fetch(&mut self, fetch_word: u32, cycles: u64) -> FetchEvent {
+        self.bios_trace.note_fetch(fetch_word, cycles)
+    }
+
+    /// Whether per-call service register dumps should be printed.
+    pub fn bios_trace_service_logging(&self) -> bool {
+        self.bios_trace.service_trace()
+    }
+
+    /// Close the instruction fetch opened by [`Bus::begin_bios_fetch`].
+    pub fn end_bios_fetch(&mut self) {
+        self.bios_trace.end_fetch();
+    }
+
+    /// End-of-run firmware activity summary, `None` while tracing is disabled.
+    pub fn bios_activity_summary(&self) -> Option<String> {
+        self.bios_trace.summary()
+    }
+
+    /// Capture a copy of DRAM at the BIOS-to-game handoff for offline
+    /// analysis. Only meaningful while the trace is enabled.
+    pub fn capture_handoff_dram(&mut self) {
+        if self.bios_trace.is_enabled() {
+            self.handoff_dram = Some(self.dram.to_vec());
+        }
+    }
+
+    /// Take the captured handoff DRAM image, if any.
+    pub fn take_handoff_dram(&mut self) -> Option<Vec<u8>> {
+        self.handoff_dram.take()
+    }
+
+    /// Copy of the current DRAM contents for end-of-run diagnostics.
+    pub fn dram_contents(&self) -> Vec<u8> {
+        self.dram.to_vec()
+    }
+
+    /// First-read samples of the resident data area for the diff oracle.
+    pub fn resident_data_samples(&self) -> Vec<((u32, u32), u8)> {
+        self.bios_trace.resident_data_samples()
+    }
+
+    /// Top polled MMIO addresses (poll profiling).
+    pub fn mmio_read_summary(&self) -> Vec<(u32, u64)> {
+        self.bios_trace.mmio_read_summary()
+    }
+
+    /// Append bus-visible state (boot source, MMIO registers, DRAM page
+    /// occupancy) to a handoff snapshot dump.
+    pub fn append_handoff_snapshot(&self, text: &mut String) {
+        const HANDOFF_DRAM_RANGE_CAP: usize = 64;
+        let _ = writeln!(text, "  boot source: {:?}", self.boot_source);
+
+        let mut ranges = Vec::from([
+            ("PPU registers", 0x0801_0000, 0x0801_00ff),
+            ("SPU registers", 0x0805_0000, 0x0805_00ff),
+            ("CD servo", 0x0806_0000, 0x0806_00ff),
+            ("MIU", 0x0807_000c, 0x0807_01fc),
+            ("Buffer control", 0x0809_0000, 0x0809_00fc),
+            ("Interrupt controller", 0x080a_0000, 0x080a_0024),
+            ("I2C", 0x0813_0020, 0x0813_0038),
+            ("UART", 0x0815_0000, 0x0815_0010),
+            ("System config", 0x0820_0000, 0x0820_0114),
+            ("Clock registers", 0x0821_0000, 0x0821_0114),
+            ("MIU extended", 0x0823_0000, 0x0823_0064),
+        ]);
+        const TIMER_NAMES: [&str; 6] = [
+            "Timer 0", "Timer 1", "Timer 2", "Timer 3", "Timer 4", "Timer 5",
+        ];
+        for (block, name) in TIMER_NAMES.iter().enumerate() {
+            let base = 0x0816_0000 + (block as u32) * 0x1000;
+            ranges.push((name, base, base + 0x40));
+        }
+
+        for (name, start, end) in ranges {
+            let _ = writeln!(text, "  {name} {start:08x}-{end:08x}:");
+            let mut line = String::new();
+            let mut words = 0;
+            for address in (start..=end).step_by(4) {
+                let value = match self.devices.read_u32(address) {
+                    Ok(value) => format!("{value:08x}"),
+                    Err(_) => "????????".to_string(),
+                };
+                let _ = write!(line, " {address:08x}={value}");
+                words += 1;
+                if words % 4 == 0 {
+                    let _ = writeln!(text, "   {line}");
+                    line.clear();
+                }
+            }
+            if !line.is_empty() {
+                let _ = writeln!(text, "   {line}");
+            }
+        }
+
+        let mut page_ranges: Vec<(u32, u32)> = Vec::new();
+        const PAGE: usize = 4096;
+        for page in 0..DRAM_SIZE / PAGE {
+            let start = page * PAGE;
+            let end = start + PAGE;
+            if self.dram[start..end].iter().any(|byte| *byte != 0) {
+                match page_ranges.last_mut() {
+                    Some(range) if range.1 == start as u32 => range.1 = end as u32,
+                    _ => page_ranges.push((start as u32, end as u32)),
+                }
+            }
+        }
+        let total = page_ranges.len();
+        page_ranges.truncate(HANDOFF_DRAM_RANGE_CAP);
+        let _ = writeln!(
+            text,
+            "  dram non-zero page ranges ({total} total, up to {HANDOFF_DRAM_RANGE_CAP} shown): {page_ranges:?}"
+        );
+    }
+
     pub fn service_cd(&mut self, disc: &DiscImage) -> Result<(), EmulatorError> {
         while let Some(request) = self.devices.take_cd_dma_request() {
-            let sector = disc.read_raw_sector(request.lba)?;
+            // Reads past the program area land in the lead-out track,
+            // whose sectors are zero-filled; the image itself ends there.
+            static ZERO_SECTOR: [u8; 2352] = [0; 2352];
+            let sector: &[u8] = match disc.read_raw_sector(request.lba) {
+                Ok(sector) => sector,
+                Err(EmulatorError::DiscSectorOutOfRange { .. }) => &ZERO_SECTOR,
+                Err(error) => return Err(error),
+            };
+            if self.bios_trace.is_enabled() && request.buffer_pointer < crate::GAME_ENTRY_PHYSICAL {
+                eprintln!(
+                    "[cd-dma] low-destination load: lba {} -> {:08x}, {} sector(s)",
+                    request.lba, request.buffer_pointer, request.sector_size
+                );
+            }
             let mut pointer = request.buffer_pointer;
             for index in 0..request.sector_size {
                 let byte = sector.get(index).copied().unwrap_or(0);
@@ -515,13 +801,19 @@ impl Bus {
     }
 
     fn read_external_window(&self, address: u32) -> Result<u8, EmulatorError> {
+        let firmware = self
+            .firmware
+            .as_ref()
+            .ok_or_else(|| memory_fault("read", address, 1))?;
         if self.boot_source == BootSource::InternalRom && address >= BOOT_WINDOW_START {
+            let rom = firmware.internal_rom();
             let offset = (address - BOOT_WINDOW_START) as usize;
-            return Ok(self.firmware.internal_rom()[offset % self.firmware.internal_rom().len()]);
+            return Ok(rom[offset % rom.len()]);
         }
 
+        let rom = firmware.bios_rom();
         let offset = (address - EXTERNAL_ROM_START) as usize;
-        Ok(self.firmware.bios_rom()[offset % self.firmware.bios_rom().len()])
+        Ok(rom[offset % rom.len()])
     }
 }
 
