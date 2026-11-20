@@ -62,8 +62,11 @@ Place legally dumped firmware in the frontend **system** directory:
 
 The folder and file names are case-sensitive. The core reads only this fixed
 location; it does not search the content directory or other candidate paths.
-The `.info` file declares the same paths, so RetroArch's core information page
-lists them as required firmware.
+The `.info` file declares the same paths.
+
+The firmware is optional: when both files are missing, the core boots content
+through its HLE path instead. Retail games additionally call firmware-resident
+services in DRAM, so the dumped firmware remains the recommended way to play.
 
 See [Game File Formats](Game-File-Formats.md) for sizes and roles.
 
@@ -86,7 +89,8 @@ cargo run -p hyperscanemu -- <media.bin|media.cue|media.zip> --inspect
 - Two joypads plus left analog sticks
 - DAC FIFO audio callbacks (hardware synthesizer remains silent)
 - Full-path BIN/CUE/ZIP media loading
-- Required firmware discovery from the frontend system directory
+- Optional firmware discovery from the frontend system directory (HLE boot
+  when the firmware files are absent)
 - Save states with a versioned `HSEM` header (format version 1)
 
 ## Current limitations

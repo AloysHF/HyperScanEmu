@@ -20,6 +20,10 @@ pub(crate) struct Cli {
     #[arg(long, value_name = "DIR", default_value = "system")]
     pub(crate) system_dir: PathBuf,
 
+    /// Boot the game directly without firmware (HLE boot path)
+    #[arg(long = "hle-boot")]
+    pub(crate) hle_boot: bool,
+
     /// Initial integer window scale
     #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=8))]
     pub(crate) scale: u32,
@@ -66,6 +70,7 @@ pub(crate) struct Cli {
 pub(crate) struct PlayOptions {
     pub(crate) system_dir: PathBuf,
     pub(crate) media: PathBuf,
+    pub(crate) hle_boot: bool,
     pub(crate) scale: u32,
     pub(crate) fullscreen: bool,
     pub(crate) volume: u16,
@@ -155,6 +160,16 @@ mod tests {
         .unwrap();
         assert_eq!(shot.screenshot.as_deref(), Some(Path::new("startup.png")));
         assert_eq!(shot.screenshot_frames, 1800);
+    }
+
+    #[test]
+    fn hle_boot_flag_is_independent_of_system_dir() {
+        let cli = Cli::try_parse_from(["hyperscanemu", "game.zip", "--hle-boot"]).unwrap();
+        assert!(cli.hle_boot);
+        assert_eq!(cli.system_dir, PathBuf::from("system"));
+
+        let cli = Cli::try_parse_from(["hyperscanemu", "game.zip"]).unwrap();
+        assert!(!cli.hle_boot);
     }
 
     #[test]

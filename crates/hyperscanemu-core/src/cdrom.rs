@@ -207,6 +207,16 @@ impl CdServo {
         self.pending_dma.take()
     }
 
+    /// Overwrite the guest-visible servo state, as the firmware leaves it
+    /// after disc identification (HLE boot path).
+    pub(crate) fn set_servo_state(&mut self, state: CdServoState) {
+        self.current_sector = state.current_sector;
+        self.seek_lba = state.seek_lba;
+        self.skip = state.skip;
+        self.speed = state.speed;
+        self.frame_found = state.frame_found;
+    }
+
     pub(crate) fn complete_dma(&mut self, next_pointer: u32) {
         self.buffer_pointer = next_pointer;
         self.frame_found = true;
