@@ -21,6 +21,9 @@ const SPU_BASE: u32 = 0x0805_0000;
 const SPU_END: u32 = 0x0805_ffff;
 const I2C_BASE: u32 = 0x0813_0000;
 const I2C_END: u32 = 0x0813_ffff;
+const SD_BASE: u32 = 0x0818_0000;
+const USB_BASE: u32 = 0x081b_0000;
+const SD_STATUS_TIMEOUT: u32 = 1 << 10;
 const C3_STUB_START: u32 = 0x0824_0000;
 const C3_STUB_END: u32 = 0x0824_ffff;
 const TIMER_BASE: u32 = 0x0816_0000;
@@ -138,6 +141,21 @@ impl Spg290Devices {
         if let Some(value) = self.video.read(address) {
             return Ok(value);
         }
+        if (SD_BASE..SD_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // SD-card controller: the retail titles probe it for a memory
+            // card. No card is modeled, so the status register reports a
+            // command timeout and every other register reads back as zero.
+            return Ok(if address == SD_BASE + 0x14 {
+                SD_STATUS_TIMEOUT
+            } else {
+                0
+            });
+        }
+        if (USB_BASE..USB_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // USB-device controller: probed by some titles; no peripheral
+            // is modeled, reads return zero.
+            return Ok(0);
+        }
         if (CD_BASE..=CD_END).contains(&address) {
             return self
                 .cd
@@ -223,6 +241,14 @@ impl Spg290Devices {
             if !self.video.interrupt_pending() {
                 self.pending_interrupts &= !(1_u64 << PPU_INTERRUPT_SOURCE);
             }
+            return Ok(());
+        }
+        if (SD_BASE..SD_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // SD-card controller probes: accept the writes; no card responds.
+            return Ok(());
+        }
+        if (USB_BASE..USB_BASE + 0x100).contains(&address) && address & 3 == 0 {
+            // USB-device controller: accept the writes; no peripheral.
             return Ok(());
         }
         if (CD_BASE..=CD_END).contains(&address) {
@@ -336,6 +362,14 @@ impl Spg290Devices {
         }
         for timer in &mut self.timers {
             if timer.tick(cpu_cycles)? {
+                if std::env::var_os("HYPERSCANEMU_TRACE_SERVICE_CALLS").is_some() {
+                    static TIMER_RAISES: std::sync::atomic::AtomicU32 =
+                        std::sync::atomic::AtomicU32::new(0);
+                    let n = TIMER_RAISES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n.is_multiple_of(50) {
+                        eprintln!("[timer-raise] n={n}");
+                    }
+                }
                 self.pending_interrupts |= 1_u64 << TIMER_INTERRUPT_SOURCE;
             }
         }
@@ -343,7 +377,17 @@ impl Spg290Devices {
     }
 
     pub fn take_pending_interrupts(&mut self) -> u64 {
-        std::mem::take(&mut self.pending_interrupts)
+        let taken = std::mem::take(&mut self.pending_interrupts);
+        if std::env::var_os("HYPERSCANEMU_TRACE_SERVICE_CALLS").is_some()
+            && taken & (1_u64 << 56) != 0
+        {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 5 || n.is_multiple_of(200) {
+                eprintln!("[take56] n={n} taken={taken:016x}");
+            }
+        }
+        taken
     }
 
     pub fn set_input(&mut self, input: InputState) {
@@ -360,6 +404,11 @@ impl Spg290Devices {
 
     pub fn set_disc(&mut self, sector_count: Option<u32>) {
         self.cd.set_disc(sector_count);
+    }
+
+    /// Overwrite the CD servo state (HLE boot initialization).
+    pub fn set_cd_servo_state(&mut self, state: crate::CdServoState) {
+        self.cd.set_servo_state(state);
     }
 
     pub(crate) fn cd_command_trace(&self) -> Vec<CdCommandTrace> {

@@ -59,6 +59,12 @@ system/hyperscanemu/spg290.bin       32768 bytes
 system/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
 
+Firmware is optional: when the files are missing, or `--hle-boot` is passed,
+the emulator boots the game directly through the HLE boot path (see
+[Architecture](docs/Architecture.md)). Retail games additionally call
+firmware-resident services in DRAM, so the dumped firmware remains the
+recommended way to play.
+
 See the [Standalone Emulator](docs/Standalone-Emulator.md) guide for options,
 keyboard controls, headless capture, and diagnostic CLI workflows.
 
@@ -73,7 +79,8 @@ legally dumped firmware in the frontend system directory:
 ```
 
 The folder and file names are case-sensitive and the loader never searches
-other locations.
+other locations. The firmware is optional: without it the core boots through
+the HLE path, though retail games may still need firmware-resident services.
 
 See the [RetroArch Core](docs/RetroArch-Core.md) guide for installation,
 loading content, and current limitations. Mobile and TV targets:
@@ -97,7 +104,12 @@ cargo run -p hyperscanemu -- <media> --system-dir system \
   --headless --frames <N> --output frame.ppm
 cargo run -p hyperscanemu -- <media> --system-dir system \
   -S startup.png --screenshot-frames 300
+cargo run -p hyperscanemu -- <media> --hle-boot
 ```
+
+`HYPERSCANEMU_TRACE_BIOS_FETCH=1` additionally prints a BIOS-to-game handoff
+snapshot and a firmware-activity summary (see
+[Architecture](docs/Architecture.md)).
 
 ## Building
 

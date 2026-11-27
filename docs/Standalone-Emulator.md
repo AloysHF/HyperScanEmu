@@ -23,7 +23,11 @@ system/hyperscanemu/hyperscan.bin  1048576 bytes
 ```
 
 The directory and file names are case-sensitive. No other location or name is
-searched.
+searched. The firmware is optional: when both files are missing, or when
+`--hle-boot` is passed, the emulator boots the game directly through the HLE
+path (see [Architecture](Architecture.md)). Retail games additionally call
+firmware-resident services in DRAM, so the dumped firmware remains the
+recommended way to play.
 
 ## Synopsis
 
@@ -53,6 +57,9 @@ hyperscan-emu game.zip --system-dir system --headless --frames 300 --output fram
 
 # Headless PNG screenshot
 hyperscan-emu game.zip --system-dir system -S startup.png --screenshot-frames 300
+
+# Boot without firmware (HLE path)
+hyperscan-emu game.zip --hle-boot
 ```
 
 ## Options
@@ -61,6 +68,7 @@ hyperscan-emu game.zip --system-dir system -S startup.png --screenshot-frames 30
 |---|---:|---|
 | `<MEDIA>` | — | Path to BIN, CUE, or ZIP game media. |
 | `--system-dir <DIR>` | `system` | Directory containing the `hyperscanemu/` firmware folder. |
+| `--hle-boot` | off | Boot the game directly without firmware (HLE boot path). |
 | `-s, --scale <1-8>` | `1` | Initial integer window scale. |
 | `-f, --fullscreen` | off | Open a borderless desktop-sized window. |
 | `-v, --volume <0-100>` | `100` | Host audio volume; zero disables audio. |

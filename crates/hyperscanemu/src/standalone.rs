@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use hyperscanemu_core::{Emulator, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use hyperscanemu_core::{Emulator, Firmware, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use hyperscanemu_media::load_disc;
 use image::{ImageFormat, RgbImage};
 use minifb::{Key, KeyRepeat, ScaleMode, Window, WindowOptions};
@@ -13,11 +13,31 @@ use crate::cli::PlayOptions;
 
 const FRAMES_PER_SECOND: usize = 60;
 
+/// Load the firmware ROMs unless HLE boot is forced. `Ok(None)` selects the
+/// HLE boot path, which needs no firmware files.
+pub(crate) fn load_firmware(system_dir: &Path, force_hle: bool) -> Result<Option<Firmware>> {
+    if force_hle {
+        return Ok(None);
+    }
+    match hyperscanemu_core::firmware::load(system_dir) {
+        Ok(firmware) => Ok(Some(firmware)),
+        Err(error) => {
+            eprintln!("note: firmware unavailable ({error}); booting through HLE");
+            Ok(None)
+        }
+    }
+}
+
 pub(crate) fn run(options: PlayOptions) -> Result<()> {
-    let firmware = hyperscanemu_core::firmware::load(&options.system_dir)?;
     let disc = load_disc(&options.media)?;
-    let mut emulator = Emulator::new(firmware);
+    let mut emulator = match load_firmware(&options.system_dir, options.hle_boot)? {
+        Some(firmware) => Emulator::new(firmware),
+        None => Emulator::new_hle(),
+    };
     emulator.attach_disc(disc);
+    if emulator.boot_mode() == hyperscanemu_core::BootMode::Hle {
+        emulator.boot_hle()?;
+    }
 
     if options.headless || options.screenshot.is_some() || options.output.is_some() {
         let frames = options
@@ -117,7 +137,9 @@ fn run_window(mut emulator: Emulator, options: &PlayOptions) -> Result<()> {
             }
         }
         if window.is_key_down(Key::LeftCtrl) && window.is_key_pressed(Key::R, KeyRepeat::No) {
-            emulator.reset();
+            if let Err(error) = emulator.reset() {
+                eprintln!("reset failed: {error}");
+            }
             if let Some(audio) = &audio {
                 audio.clear();
             }
